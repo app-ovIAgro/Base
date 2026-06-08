@@ -1,25 +1,372 @@
 /**
  * ============================================================
- * APP.JS — El Cerebro de OvIAgro La Rioja
+ * APP.JS — El Cerebro de OvIAgro PWA
  * ============================================================
  * Archivo: app.js
  * Propósito: Controla TODA la lógica de la aplicación.
  *   - Registro del Service Worker (PWA offline)
+ *   - Firebase Authentication con Google Sign-In
+ *   - Firebase Firestore para persistencia en la nube
+ *   - Persistencia offline nativa de Firestore
  *   - Enrutador SPA (cambio de vistas sin recargar la página)
- *   - Motor de persistencia en LocalStorage (formato JSON)
- *   - Lógica de negocio: validación, sanitización y guardado
+ *   - Fotos en Base64 guardadas como campo de texto en Firestore
  *
  * Principios aplicados:
- *   - Separación de responsabilidades (módulos independientes)
- *   - Offline-First estricto (sin backend, sin APIs externas)
- *   - Manejo robusto de errores (try/catch en toda operación de datos)
- *   - Sanitización de entradas para prevenir inyecciones de código
- *
- * Autoría: Escuela Agrotécnica — La Rioja
+ *   - Offline-First: Firestore cachea localmente sin conexión
+ *   - Manejo robusto de errores (try/catch en toda operación)
+ *   - Sanitización de entradas para prevenir inyecciones XSS
+ *   - Datos vinculados al operario (operario_uid) por seguridad
  * ============================================================
  */
 
 'use strict';
+
+/* ============================================================
+   MÓDULO 0: REGISTRO DEL SERVICE WORKER (PWA)
+   Se registra PRIMERO, antes de cualquier otra inicialización,
+   para activar el motor offline lo antes posible.
+============================================================ */
+
+/**
+ * Registra el Service Worker si el navegador lo soporta.
+ * El SW interceptará las peticiones de red y servirá la app desde caché.
+ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const registro = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      console.log('[SW] ✅ Service Worker registrado. Scope:', registro.scope);
+      registro.addEventListener('updatefound', () => {
+        console.log('[SW] 🔄 Nueva versión disponible.');
+        mostrarToast('🔄 Actualizando la app...', 'info', 5000);
+      });
+    } catch (error) {
+      console.error('[SW] ❌ Error al registrar el Service Worker:', error);
+    }
+  });
+}
+
+
+/* ============================================================
+   MÓDULO 1: CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
+   Credenciales reales del proyecto oviagro-b28c5.
+   Aquí se enciende toda la infraestructura de la nube.
+============================================================ */
+
+/**
+ * Configuración del proyecto Firebase.
+ * Para Firebase JS SDK v7.20.0 y versiones posteriores, measurementId es opcional.
+ */
+const firebaseConfig = {
+  apiKey:            "AIzaSyDP1Bt-bTk39wr0ctC9l7kGc1P_ZsaRigo",
+  authDomain:        "oviagro-b28c5.firebaseapp.com",
+  projectId:         "oviagro-b28c5",
+  storageBucket:     "oviagro-b28c5.firebasestorage.app",
+  messagingSenderId: "634144367466",
+  appId:             "1:634144367466:web:b4dffd2e23c14733fa3b13",
+  measurementId:     "G-NHVSKDV21T"
+};
+
+// Inicializar Firebase con la configuración del proyecto
+firebase.initializeApp(firebaseConfig);
+
+/**
+ * Referencia a los servicios de Firebase que usaremos.
+ * Se declaran aquí para que sean accesibles en todo el archivo.
+ */
+const auth = firebase.auth();
+const db   = firebase.firestore();
+
+/**
+ * Activar la persistencia offline nativa de Firestore.
+ * Esto permite que los datos guardados estén disponibles aunque
+ * el dispositivo no tenga conexión a internet en el campo.
+ * Firestore los sincronizará automáticamente al recuperar señal.
+ */
+db.enablePersistence({ synchronizeTabs: true })
+  .then(() => {
+    console.log('[Firestore] ✅ Persistencia offline activada correctamente.');
+  })
+  .catch((error) => {
+    if (error.code === 'failed-precondition') {
+      // Ocurre si hay múltiples pestañas abiertas; funciona igual pero sin sync entre tabs
+      console.warn('[Firestore] ⚠️ Persistencia offline: múltiples pestañas abiertas.');
+    } else if (error.code === 'unimplemented') {
+      // El navegador no soporta persistencia offline (muy poco común en móviles modernos)
+      console.warn('[Firestore] ⚠️ Este navegador no soporta persistencia offline.');
+    } else {
+      console.error('[Firestore] ❌ Error al activar persistencia:', error);
+    }
+  });
+
+
+/* ============================================================
+   MÓDULO 2: AUTENTICACIÓN CON GOOGLE (Firebase Auth)
+   Gestiona el flujo de login/logout del operario.
+============================================================ */
+
+/** @type {Object|null} Usuario actualmente autenticado (objeto Firebase User) */
+let usuarioActual = null;
+
+/** @type {Function|null} Función de desuscripción del listener de Firestore en tiempo real */
+let desuscribirAnimales = null;
+
+/**
+ * Dispara el flujo de autenticación con Google mediante un popup.
+ * Al completarse, onAuthStateChanged detecta el cambio y muestra la app.
+ */
+async function iniciarSesionConGoogle() {
+  const btnLogin    = document.getElementById('btn-google-login');
+  const msgCargando = document.getElementById('login-cargando');
+
+  try {
+    // Deshabilitar el botón y mostrar estado de carga
+    if (btnLogin)    btnLogin.disabled = true;
+    if (msgCargando) msgCargando.classList.add('visible');
+
+    // Proveedor de autenticación de Google
+    const proveedor = new firebase.auth.GoogleAuthProvider();
+    // Solicitar siempre al usuario que elija su cuenta de Google
+    proveedor.setCustomParameters({ prompt: 'select_account' });
+
+    // Abrir el popup de autenticación de Google
+    await auth.signInWithPopup(proveedor);
+    // onAuthStateChanged detectará el login y mostrará la app automáticamente
+    console.log('[Auth] ✅ Login con Google completado.');
+
+  } catch (error) {
+    console.error('[Auth] ❌ Error al iniciar sesión con Google:', error);
+
+    // Mensajes de error amigables según el código del error
+    const mensajesError = {
+      'auth/popup-closed-by-user':    'Cerraste la ventana de Google. Intentá de nuevo.',
+      'auth/popup-blocked':           'El popup fue bloqueado. Habilitá las ventanas emergentes.',
+      'auth/network-request-failed':  'Sin conexión. Necesitás internet para ingresar.',
+      'auth/cancelled-popup-request': 'Operación cancelada. Intentá de nuevo.',
+    };
+    const msg = mensajesError[error.code] || `Error al ingresar: ${error.message}`;
+    mostrarToast(msg, 'error', 6000);
+
+    // Rehabilitar el botón en caso de error
+    if (btnLogin)    btnLogin.disabled = false;
+    if (msgCargando) msgCargando.classList.remove('visible');
+  }
+}
+
+/**
+ * Cierra la sesión del operario actual.
+ * Cancela las suscripciones a Firestore y sale de la cuenta de Google.
+ */
+async function cerrarSesion() {
+  try {
+    // Cancelar todas las suscripciones activas de Firestore
+    if (desuscribirAnimales) {
+      desuscribirAnimales();
+      desuscribirAnimales = null;
+    }
+    if (desuscribirTareas) {
+      desuscribirTareas();
+      desuscribirTareas = null;
+    }
+    if (desuscribirPredio) {
+      desuscribirPredio();
+      desuscribirPredio = null;
+    }
+    await auth.signOut();
+    console.log('[Auth] ✅ Sesión cerrada correctamente.');
+  } catch (error) {
+    console.error('[Auth] ❌ Error al cerrar sesión:', error);
+    mostrarToast('Error al cerrar sesión.', 'error');
+  }
+}
+
+/**
+ * Escucha en tiempo real los cambios en el estado de autenticación.
+ * Punto de entrada principal después de la carga del DOM.
+ */
+auth.onAuthStateChanged(async (usuario) => {
+  const vistaLogin   = document.getElementById('vista-login');
+  const appContainer = document.getElementById('app-container');
+  const navbar       = document.getElementById('navbar');
+
+  if (usuario) {
+    // ── OPERARIO AUTENTICADO ──
+    usuarioActual = usuario;
+    console.log(`[Auth] ✅ Operario autenticado: ${usuario.email} (UID: ${usuario.uid})`);
+
+    // Mostrar interfaz principal
+    if (vistaLogin)   vistaLogin.classList.add('oculto');
+    if (appContainer) appContainer.style.display = 'block';
+    if (navbar)       navbar.style.display = 'flex';
+
+    // Inicializar componentes base de la app una sola vez
+    inicializarAppUnaVez();
+
+    // Migrar datos locales previos a la base de datos Firestore
+    await migrarDatosLocalesAFirestore();
+
+    // Activar suscripciones en tiempo real
+    suscribirAnimalesEnTiempoReal();
+    suscribirTareasEnTiempoReal();
+    suscribirPredioEnTiempoReal();
+
+  } else {
+    // ── OPERARIO NO AUTENTICADO ──
+    usuarioActual = null;
+    console.log('[Auth] ℹ️ No hay sesión activa. Mostrando pantalla de login.');
+
+    // Cancelar todas las suscripciones
+    if (desuscribirAnimales) { desuscribirAnimales(); desuscribirAnimales = null; }
+    if (desuscribirTareas)   { desuscribirTareas();   desuscribirTareas = null; }
+    if (desuscribirPredio)   { desuscribirPredio();   desuscribirPredio = null; }
+
+    // Ocultar interfaz y mostrar pantalla de login
+    if (vistaLogin)   vistaLogin.classList.remove('oculto');
+    if (appContainer) appContainer.style.display = 'none';
+    if (navbar)       navbar.style.display = 'none';
+  }
+});
+
+
+/** @type {Function|null} Función de desuscripción del listener de Tareas en Firestore */
+let desuscribirTareas = null;
+
+/** @type {Function|null} Función de desuscripción del listener de Predio en Firestore */
+let desuscribirPredio = null;
+
+/**
+ * Migra los datos que existan en LocalStorage (de la versión vieja sin login)
+ * hacia Firebase Firestore. Se ejecuta una sola vez al iniciar sesión por primera vez.
+ * Usa transacciones batch para asegurar la consistencia y la velocidad offline de la PWA.
+ */
+async function migrarDatosLocalesAFirestore() {
+  if (!usuarioActual) return;
+
+  try {
+    // 1. Migrar Predio local
+    const predioLocal = leerStorage(CLAVES_STORAGE.PREDIO);
+    if (predioLocal && (predioLocal.objetivo || predioLocal.coordenadas)) {
+      console.log('[Migración] 📦 Migrando predio local a Firestore...');
+      await db.collection('predios').doc(usuarioActual.uid).set({
+        ...predioLocal,
+        operario_uid: usuarioActual.uid,
+        operario_email: usuarioActual.email,
+        fechaActualizacion: new Date().toISOString()
+      }, { merge: true });
+      
+      // Limpiar predio local
+      localStorage.removeItem(CLAVES_STORAGE.PREDIO);
+      console.log('[Migración] ✅ Predio migrado con éxito.');
+    }
+
+    // 2. Migrar Inventario local (Animales)
+    const inventarioLocal = leerStorage(CLAVES_STORAGE.INVENTARIO);
+    if (Array.isArray(inventarioLocal) && inventarioLocal.length > 0) {
+      console.log(`[Migración] 📦 Migrando ${inventarioLocal.length} animales locales a Firestore...`);
+      const batch = db.batch();
+      
+      inventarioLocal.forEach((animal) => {
+        const docRef = db.collection('animales').doc(); // Generar ID automático de Firestore
+        const animalMigrado = {
+          ...animal,
+          operario_uid: usuarioActual.uid,
+          operario_email: usuarioActual.email,
+          id_anterior: animal.id || null,
+          fechaModificacion: new Date().toISOString()
+        };
+        // Eliminar ID local redundante si tiene
+        delete animalMigrado.id;
+        delete animalMigrado.sincronizado; // En firestore ya está sincronizado
+        
+        batch.set(docRef, animalMigrado);
+      });
+      
+      await batch.commit();
+      localStorage.removeItem(CLAVES_STORAGE.INVENTARIO);
+      console.log('[Migración] ✅ Inventario de animales migrado con éxito.');
+    }
+
+    // 3. Migrar Agenda local (Tareas)
+    const agendaLocal = leerStorage(CLAVES_STORAGE.AGENDA);
+    if (Array.isArray(agendaLocal) && agendaLocal.length > 0) {
+      console.log(`[Migración] 📦 Migrando ${agendaLocal.length} tareas locales a Firestore...`);
+      const batch = db.batch();
+      
+      agendaLocal.forEach((tarea) => {
+        const docRef = db.collection('tareas').doc();
+        const tareaMigrada = {
+          ...tarea,
+          operario_uid: usuarioActual.uid,
+          operario_email: usuarioActual.email,
+          id_anterior: tarea.id || null,
+          fechaModificacion: new Date().toISOString()
+        };
+        delete tareaMigrada.id;
+        delete tareaMigrada.sincronizado;
+        
+        batch.set(docRef, tareaMigrada);
+      });
+      
+      await batch.commit();
+      localStorage.removeItem(CLAVES_STORAGE.AGENDA);
+      console.log('[Migración] ✅ Agenda de tareas migrada con éxito.');
+    }
+  } catch (error) {
+    console.error('[Migración] ❌ Error durante la migración de datos locales:', error);
+    mostrarToast('Error al migrar los datos locales a la nube.', 'error', 5000);
+  }
+}
+
+/**
+ * Suscribe un listener en tiempo real (onSnapshot) para el Predio del operario.
+ */
+function suscribirPredioEnTiempoReal() {
+  if (desuscribirPredio) {
+    desuscribirPredio();
+  }
+
+  if (!usuarioActual) return;
+
+  const docRef = db.collection('predios').doc(usuarioActual.uid);
+
+  desuscribirPredio = docRef.onSnapshot(
+    (doc) => {
+      if (doc.exists) {
+        const predio = doc.data();
+        const textoGPS = document.getElementById('texto-gps');
+        const selObj   = document.getElementById('sel-objetivo');
+
+        if (predio.coordenadas && textoGPS) {
+          const c = predio.coordenadas;
+          textoGPS.textContent =
+            `📍 Lat: ${c.latitud.toFixed(6)} | Long: ${c.longitud.toFixed(6)} ` +
+            `(±${Math.round(c.precision)}m)`;
+        } else if (textoGPS) {
+          textoGPS.textContent = 'Coordenadas no registradas aún.';
+        }
+
+        if (predio.objetivo && selObj) {
+          selObj.value = predio.objetivo;
+        }
+      }
+    },
+    (error) => {
+      console.error('[Predio] ❌ Error en onSnapshot:', error);
+    }
+  );
+}
+
+
+/**
+ * Conecta el botón de login con la función de autenticación.
+ * Se ejecuta apenas el DOM está listo para no perder el evento.
+ */
+document.addEventListener('DOMContentLoaded', () => {
+  const btnLogin = document.getElementById('btn-google-login');
+  if (btnLogin) {
+    btnLogin.addEventListener('click', iniciarSesionConGoogle);
+  }
+});
 
 /* ============================================================
    MÓDULO 1: CONSTANTES Y CLAVES DE ALMACENAMIENTO
@@ -279,8 +626,7 @@ function inicializarRouter() {
 
 /**
  * Captura las coordenadas GPS del dispositivo usando la Geolocation API.
- * Si el usuario acepta, guarda las coordenadas en el predio.
- * Si el usuario deniega o no hay GPS, muestra mensaje informativo.
+ * Si el usuario acepta, guarda las coordenadas en el predio de Firestore.
  */
 function capturarGPS() {
   const btnGPS   = document.getElementById('btn-capturar-gps');
@@ -291,13 +637,18 @@ function capturarGPS() {
     return;
   }
 
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada.', 'error');
+    return;
+  }
+
   // Feedback visual durante la captura
   btnGPS.disabled  = true;
   textoGPS.textContent = '📡 Buscando señal GPS... Aguardá.';
 
   navigator.geolocation.getCurrentPosition(
     // ÉXITO: coordenadas obtenidas
-    (posicion) => {
+    async (posicion) => {
       const coords = {
         latitud:  posicion.coords.latitude,
         longitud: posicion.coords.longitude,
@@ -305,19 +656,22 @@ function capturarGPS() {
         timestamp: new Date().toISOString(),
       };
 
-      // Persistir las coordenadas en el predio
-      const predio = leerStorage(CLAVES_STORAGE.PREDIO) || {};
-      predio.coordenadas = coords;
-      escribirStorage(CLAVES_STORAGE.PREDIO, predio);
+      try {
+        await db.collection('predios').doc(usuarioActual.uid).set({
+          operario_uid: usuarioActual.uid,
+          operario_email: usuarioActual.email,
+          coordenadas: coords,
+          fechaActualizacion: new Date().toISOString()
+        }, { merge: true });
 
-      // Actualizar la UI
-      textoGPS.textContent =
-        `📍 Lat: ${coords.latitud.toFixed(6)} | Long: ${coords.longitud.toFixed(6)} ` +
-        `(±${Math.round(coords.precision)}m)`;
-
-      btnGPS.disabled = false;
-      mostrarToast('✅ Coordenadas GPS guardadas correctamente.', 'exito');
-      console.log('[GPS] ✅ Coordenadas capturadas:', coords);
+        btnGPS.disabled = false;
+        mostrarToast('✅ Coordenadas GPS guardadas correctamente.', 'exito');
+        console.log('[GPS] ✅ Coordenadas guardadas en Firestore:', coords);
+      } catch (error) {
+        console.error('[GPS] ❌ Error al guardar coordenadas en Firestore:', error);
+        btnGPS.disabled = false;
+        mostrarToast('Error al guardar GPS en la nube.', 'error');
+      }
     },
     // ERROR: no se pudieron obtener las coordenadas
     (errorGeo) => {
@@ -338,9 +692,9 @@ function capturarGPS() {
 }
 
 /**
- * Guarda el objetivo productivo seleccionado en el predio.
+ * Guarda el objetivo productivo seleccionado en el predio de Firestore.
  */
-function guardarDatosPredio() {
+async function guardarDatosPredio() {
   const objetivo = document.getElementById('sel-objetivo')?.value || '';
 
   if (!objetivo) {
@@ -348,50 +702,50 @@ function guardarDatosPredio() {
     return;
   }
 
-  const predio = leerStorage(CLAVES_STORAGE.PREDIO) || {};
-  predio.objetivo       = sanitizarTexto(objetivo);
-  predio.fechaActualizacion = new Date().toISOString();
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada.', 'error');
+    return;
+  }
 
-  if (escribirStorage(CLAVES_STORAGE.PREDIO, predio)) {
+  try {
+    await db.collection('predios').doc(usuarioActual.uid).set({
+      operario_uid: usuarioActual.uid,
+      operario_email: usuarioActual.email,
+      objetivo: sanitizarTexto(objetivo),
+      fechaActualizacion: new Date().toISOString()
+    }, { merge: true });
+
     mostrarToast('✅ Datos del predio guardados.', 'exito');
+  } catch (error) {
+    console.error('[Predio] ❌ Error al guardar datos en Firestore:', error);
+    mostrarToast('Error al guardar en la nube.', 'error');
   }
 }
 
 /**
- * Lee los datos del predio de LocalStorage y actualiza la UI de la vista Inicio.
+ * Carga los datos del predio. Obsoleto al usar onSnapshot en tiempo real.
  */
 function cargarDatosPredio() {
-  const predio   = leerStorage(CLAVES_STORAGE.PREDIO);
-  const textoGPS = document.getElementById('texto-gps');
-  const selObj   = document.getElementById('sel-objetivo');
-
-  if (!predio) return;
-
-  if (predio.coordenadas && textoGPS) {
-    const c = predio.coordenadas;
-    textoGPS.textContent =
-      `📍 Lat: ${c.latitud.toFixed(6)} | Long: ${c.longitud.toFixed(6)} ` +
-      `(±${Math.round(c.precision)}m)`;
-  }
-
-  if (predio.objetivo && selObj) {
-    selObj.value = predio.objetivo;
-  }
+  // Manejado en tiempo real por suscribirPredioEnTiempoReal()
 }
 
 
 /* ============================================================
-   MÓDULO 7: LÓGICA DE NEGOCIO — INVENTARIO ANIMAL
-   Funciones core para alta y consulta de animales.
+   MÓDULO 7: LÓGICA DE NEGOCIO — INVENTARIO ANIMAL (FIRESTORE)
+   Las funciones de guardado y listado ahora usan Firebase Firestore
+   en lugar de LocalStorage. La foto se guarda como Base64 en el doc.
 ============================================================ */
 
 /**
- * Valida, sanitiza y guarda un nuevo animal en el inventario local.
+ * Valida, sanitiza y guarda un nuevo animal en la colección 'animales'
+ * de Firestore. La foto (convertida a Base64 por canvas) se guarda como
+ * campo de texto 'foto' dentro del mismo documento de Firestore.
+ * El campo 'operario_uid' vincula el registro al usuario autenticado.
  *
  * @param {Object} nuevoAnimal - Datos crudos del formulario.
- * @returns {boolean} true si se guardó correctamente, false si hubo error.
+ * @returns {Promise<boolean>} true si se guardó correctamente.
  */
-function guardarAnimalLocal(nuevoAnimal) {
+async function guardarAnimalLocal(nuevoAnimal) {
   if (!nuevoAnimal || typeof nuevoAnimal !== 'object') {
     mostrarToast('Error interno: datos del animal inválidos.', 'error');
     return false;
@@ -422,163 +776,178 @@ function guardarAnimalLocal(nuevoAnimal) {
     return false;
   }
 
-  try {
-    const inventario = leerStorage(CLAVES_STORAGE.INVENTARIO) || [];
-    const caravanaLimpia = caravana.trim().toUpperCase();
-    const duplicado = inventario.find(
-      (animal) => animal.caravana_id === caravanaLimpia
-    );
+  // Verificar que haya un operario autenticado antes de guardar
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada. Recargá la app.', 'error');
+    return false;
+  }
 
-    if (duplicado) {
-      mostrarToast(
-        `❌ La caravana "${caravanaLimpia}" ya existe en el inventario.`,
-        'error',
-        5000
-      );
+  try {
+    const caravanaLimpia = caravana.trim().toUpperCase();
+
+    // Verificar duplicado consultando Firestore por este operario
+    const duplicadoSnap = await db.collection('animales')
+      .where('operario_uid', '==', usuarioActual.uid)
+      .where('caravana_id', '==', caravanaLimpia)
+      .limit(1)
+      .get();
+
+    if (!duplicadoSnap.empty) {
+      mostrarToast(`❌ La caravana "${caravanaLimpia}" ya existe en el inventario.`, 'error', 5000);
       document.getElementById('input-caravana')?.focus();
       return false;
     }
 
-    // Normalizar campos opcionales vacíos a null o valores correspondientes
-    nombre = nombre?.trim() ? sanitizarTexto(nombre) : null;
-    fecha_nac = fecha_nac ? fecha_nac : null;
-    peso_nac = peso_nac ? parseFloat(peso_nac) : null;
-    madre = madre?.trim() ? sanitizarTexto(madre.toUpperCase()) : null;
-    padre = padre?.trim() ? sanitizarTexto(padre.toUpperCase()) : null;
-    foto = foto ? foto : null;
+    // Normalizar campos opcionales vacíos a null
+    nombre    = nombre?.trim()  ? sanitizarTexto(nombre)              : null;
+    fecha_nac = fecha_nac       ? fecha_nac                           : null;
+    peso_nac  = peso_nac        ? parseFloat(peso_nac)                : null;
+    madre     = madre?.trim()   ? sanitizarTexto(madre.toUpperCase()) : null;
+    padre     = padre?.trim()   ? sanitizarTexto(padre.toUpperCase()) : null;
+    // La foto viene como cadena Base64 del procesador de canvas.
+    // Se guarda como campo de texto directamente en Firestore (sin Storage).
+    foto      = foto            ? foto                                : null;
 
     const animalSanitizado = {
-      id:            generarId(),
-      caravana_id:   sanitizarTexto(caravanaLimpia),
-      nombre:        nombre,
-      sexo:          sanitizarTexto(sexo),
-      raza:          sanitizarTexto(raza),
-      categoria:     sanitizarTexto(categoria),
+      operario_uid:     usuarioActual.uid,          // Vincula el animal al operario
+      operario_email:   usuarioActual.email,         // Email del operario (auditoría)
+      caravana_id:      sanitizarTexto(caravanaLimpia),
+      nombre:           nombre,
+      sexo:             sanitizarTexto(sexo),
+      raza:             sanitizarTexto(raza),
+      categoria:        sanitizarTexto(categoria),
       fecha_nacimiento: fecha_nac,
-      peso_nacimiento: peso_nac,
-      caravana_madre: madre,
-      caravana_padre: padre,
-      castrado:      Boolean(castrado),
-      foto:          foto,
-      sincronizado:  false,
-      historial_sanitario: [],
+      peso_nacimiento:  peso_nac,
+      caravana_madre:   madre,
+      caravana_padre:   padre,
+      castrado:         Boolean(castrado),
+      foto:             foto,                        // String Base64 directo
+      historial_sanitario:           [],
       historial_nutricional_pesajes: [],
-      fechaAlta:     new Date().toISOString(),
+      fechaAlta:         new Date().toISOString(),
       fechaModificacion: new Date().toISOString(),
     };
 
-    inventario.push(animalSanitizado);
-    const guardadoOk = escribirStorage(CLAVES_STORAGE.INVENTARIO, inventario);
+    // Guardar el documento en Firestore (ID automático con .add())
+    await db.collection('animales').add(animalSanitizado);
 
-    if (guardadoOk) {
-      console.log(`[Inventario] ✅ Animal guardado: ${animalSanitizado.caravana_id}`, animalSanitizado);
-      mostrarToast(`✅ Caravana ${animalSanitizado.caravana_id} registrada con éxito.`, 'exito');
-      return true;
-    }
-    return false;
+    console.log(`[Inventario] ✅ Animal guardado en Firestore: ${animalSanitizado.caravana_id}`);
+    mostrarToast(`✅ Caravana ${animalSanitizado.caravana_id} registrada con éxito.`, 'exito');
+    return true;
 
   } catch (error) {
-    console.error('[Inventario] ❌ Error inesperado al guardar animal:', error);
-    mostrarToast('Error inesperado al guardar. Intentá de nuevo.', 'error');
+    console.error('[Inventario] ❌ Error inesperado al guardar animal en Firestore:', error);
+    mostrarToast('Error al guardar. Verificá tu conexión e intentá de nuevo.', 'error');
     return false;
   }
 }
 
 /**
- * Lee el inventario de LocalStorage y renderiza las tarjetas en el DOM.
- * Muestra un aviso rojo si el animal no está sincronizado.
- * Si no hay animales, muestra un estado vacío orientativo.
+ * Suscribe un listener en tiempo real (onSnapshot) a la colección 'animales'
+ * de Firestore, filtrada por el UID del operario autenticado.
+ *
+ * Cuando los datos cambian en la nube (o se sincronizan desde la caché offline),
+ * el callback se dispara automáticamente y actualiza la interfaz sin recargar.
+ * La referencia de desuscripción se guarda en 'desuscribirAnimales'.
  */
-function listarAnimalesLocales() {
-  const contenedor  = document.getElementById('lista-animales');
-  const contadorEl  = document.getElementById('inventario-contador');
+function suscribirAnimalesEnTiempoReal() {
+  // Cancelar suscripción previa para evitar duplicados de listeners
+  if (desuscribirAnimales) {
+    desuscribirAnimales();
+  }
 
+  if (!usuarioActual) {
+    console.warn('[Inventario] ⚠️ No hay operario autenticado.');
+    return;
+  }
+
+  // Consulta filtrada: solo los animales de ESTE operario, por fecha desc
+  const consulta = db.collection('animales')
+    .where('operario_uid', '==', usuarioActual.uid)
+    .orderBy('fechaAlta', 'desc');
+
+  // onSnapshot se dispara con datos de caché offline o de la red.
+  // Funciona aunque el dispositivo no tenga conexión a internet.
+  desuscribirAnimales = consulta.onSnapshot(
+    (snapshot) => {
+      const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      renderizarInventario(inventario);
+      console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
+    },
+    (error) => {
+      console.error('[Inventario] ❌ Error en onSnapshot:', error);
+      mostrarToast('Error al cargar el inventario.', 'error');
+    }
+  );
+}
+
+/**
+ * Renderiza las tarjetas del inventario en el DOM.
+ * Es llamada automáticamente por el listener onSnapshot.
+ * @param {Array} inventario - Array de objetos animal desde Firestore.
+ */
+function renderizarInventario(inventario) {
+  const contenedor = document.getElementById('lista-animales');
+  const contadorEl = document.getElementById('inventario-contador');
   if (!contenedor) return;
 
-  try {
-    const inventario = leerStorage(CLAVES_STORAGE.INVENTARIO) || [];
+  if (contadorEl) {
+    contadorEl.innerHTML = inventario.length > 0
+      ? `<span>${inventario.length}</span> animal${inventario.length !== 1 ? 'es' : ''} registrado${inventario.length !== 1 ? 's' : ''}`
+      : '';
+  }
 
-    // --- Actualizar el contador ---
-    if (contadorEl) {
-      contadorEl.innerHTML = inventario.length > 0
-        ? `<span>${inventario.length}</span> animal${inventario.length !== 1 ? 'es' : ''} registrado${inventario.length !== 1 ? 's' : ''}`
-        : '';
-    }
-
-    // --- Estado vacío ---
-    if (inventario.length === 0) {
-      contenedor.innerHTML = `
-        <div class="inventario-vacio" role="status" aria-label="Inventario vacío">
-          <span class="vacio-icono" aria-hidden="true">🐑</span>
-          <p>No hay animales registrados todavía.<br>
-          Usá <strong>Alta Animal</strong> para agregar el primero.</p>
-        </div>
-      `;
-      return;
-    }
-
-    // --- Renderizar tarjetas (orden: más reciente primero) ---
-    const animalesOrdenados = [...inventario].reverse();
-
-    const htmlTarjetas = animalesOrdenados.map((animal) => {
-      const esSincronizado = animal.sincronizado === true;
-      const claseNoSinc    = esSincronizado ? '' : 'no-sincronizado';
-      const badgeSinc      = esSincronizado
-        ? ''
-        : `<span class="badge-no-sinc" aria-label="No sincronizado">
-             ⚠️ Sin sincronizar
-           </span>`;
-
-      const iconoSexo = animal.sexo === 'Macho' ? '♂️' : '♀️';
-      const iconoFoto = animal.foto ? ' 📷' : '';
-      const textoCastrado = animal.castrado ? ' (Castrado)' : '';
-
-      // ── Validación de período de retiro / carencia ──
-      // Si la fecha actual es ANTERIOR a la fecha_limite_carencia del animal,
-      // el período de retiro está activo y se muestra una alerta llamativa.
-      let badgeRetiro = '';
-      if (animal.fecha_limite_carencia) {
-        const ahora      = new Date();
-        const fechaRetiro = new Date(animal.fecha_limite_carencia);
-        if (ahora < fechaRetiro) {
-          const fechaLimiteFormateada = fechaRetiro.toLocaleDateString('es-AR', {
-            day: '2-digit', month: '2-digit', year: 'numeric',
-          });
-          badgeRetiro = `
-            <div class="badge-retiro" role="alert" aria-label="Período de retiro activo">
-              ⚠️ PERIODO DE RETIRO ACTIVO — No consumir/vender hasta ${fechaLimiteFormateada}
-            </div>`;
-        }
-      }
-
-      return `
-        <article class="animal-tarjeta ${claseNoSinc}" role="listitem"
-                 aria-label="Animal caravana ${animal.caravana_id}">
-          <p class="animal-caravana">${animal.caravana_id}${iconoFoto}</p>
-          <div class="animal-detalles">
-            ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
-            <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCastrado}<br>
-            <strong>Raza:</strong> ${animal.raza}<br>
-            <strong>Categoría:</strong> ${animal.categoria}<br>
-          </div>
-          ${badgeRetiro}
-          ${badgeSinc}
-          <p class="animal-fecha">Alta: ${formatearFecha(animal.fechaAlta)}</p>
-        </article>
-      `;
-    }).join('');
-
-    contenedor.innerHTML = htmlTarjetas;
-    console.log(`[Inventario] ✅ ${inventario.length} animales renderizados.`);
-
-  } catch (error) {
-    console.error('[Inventario] ❌ Error al listar animales:', error);
+  if (inventario.length === 0) {
     contenedor.innerHTML = `
-      <div class="inventario-vacio">
-        <span class="vacio-icono">⚠️</span>
-        <p>Error al cargar el inventario. Recargá la página.</p>
-      </div>
-    `;
+      <div class="inventario-vacio" role="status">
+        <span class="vacio-icono" aria-hidden="true">🐑</span>
+        <p>No hay animales registrados todavía.<br>
+        Usá <strong>Alta Animal</strong> para agregar el primero.</p>
+      </div>`;
+    return;
+  }
+
+  const htmlTarjetas = inventario.map((animal) => {
+    const iconoSexo     = animal.sexo === 'Macho' ? '♂️' : '♀️';
+    const iconoFoto     = animal.foto ? ' 📷' : '';
+    const textoCastrado = animal.castrado ? ' (Castrado)' : '';
+
+    let badgeRetiro = '';
+    if (animal.fecha_limite_carencia) {
+      const ahora       = new Date();
+      const fechaRetiro = new Date(animal.fecha_limite_carencia);
+      if (ahora < fechaRetiro) {
+        const fechaFmt = fechaRetiro.toLocaleDateString('es-AR', {
+          day: '2-digit', month: '2-digit', year: 'numeric'
+        });
+        badgeRetiro = `<div class="badge-retiro" role="alert">⚠️ RETIRO ACTIVO — No vender hasta ${fechaFmt}</div>`;
+      }
+    }
+
+    return `
+      <article class="animal-tarjeta" role="listitem" aria-label="Animal caravana ${animal.caravana_id}">
+        <p class="animal-caravana">${animal.caravana_id}${iconoFoto}</p>
+        <div class="animal-detalles">
+          ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
+          <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCastrado}<br>
+          <strong>Raza:</strong> ${animal.raza}<br>
+          <strong>Categoría:</strong> ${animal.categoria}<br>
+        </div>
+        ${badgeRetiro}
+        <p class="animal-fecha">Alta: ${formatearFecha(animal.fechaAlta)}</p>
+      </article>`;
+  }).join('');
+
+  contenedor.innerHTML = htmlTarjetas;
+}
+
+/**
+ * Compatibilidad: listarAnimalesLocales activa la suscripción en tiempo real.
+ * Las llamadas desde el router SPA siguen funcionando sin cambios.
+ */
+function listarAnimalesLocales() {
+  if (!desuscribirAnimales && usuarioActual) {
+    suscribirAnimalesEnTiempoReal();
   }
 }
 
@@ -606,6 +975,7 @@ function inicializarProcesadorFoto() {
       fotoBase64Temporal = null;
       contenedorPrevia.innerHTML = '';
       contenedorPrevia.classList.remove('activo');
+
       return;
     }
 
@@ -649,7 +1019,7 @@ function inicializarFormularioAlta() {
   const btn = document.getElementById('btn-guardar-animal');
   if (!btn) return;
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     let sexoSeleccionado = '';
     const radiosSexo = document.getElementsByName('sexo');
     for (const r of radiosSexo) {
@@ -673,7 +1043,8 @@ function inicializarFormularioAlta() {
       foto:          fotoBase64Temporal
     };
 
-    const guardadoOk = guardarAnimalLocal(datosFormulario);
+    // Llamada asíncrona: guardarAnimalLocal ahora guarda en Firestore (await)
+    const guardadoOk = await guardarAnimalLocal(datosFormulario);
 
     if (guardadoOk) {
       limpiarFormularioAlta();
@@ -757,7 +1128,12 @@ let puntajeFamacha    = null;         // Número del 1 al 5
  *   4. Persistir el inventario actualizado en LocalStorage.
  *   5. Mostrar feedback y limpiar el formulario.
  */
-function guardarRegistroSanitario() {
+async function guardarRegistroSanitario() {
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada. Recargá la app.', 'error');
+    return;
+  }
+
   try {
     // --- 1. Recoger valores del formulario ---
     const producto     = document.getElementById('input-producto-salud')?.value?.trim() || '';
@@ -806,11 +1182,8 @@ function guardarRegistroSanitario() {
       observaciones:         observaciones     ? sanitizarTexto(observaciones)     : null,
     };
 
-    // --- 5. Leer inventario y aplicar el registro ---
-    const inventario = leerStorage(CLAVES_STORAGE.INVENTARIO) || [];
-
     if (tipoRegistroSalud === 'individual') {
-      // ── MODO INDIVIDUAL: buscar el animal por número de caravana ──
+      // ── MODO INDIVIDUAL: buscar el animal por número de caravana en Firestore ──
       const caravanaRaw = document.getElementById('input-caravana-salud')?.value?.trim() || '';
       if (!caravanaRaw) {
         mostrarToast('⚠️ Ingresá el Nº de caravana del animal.', 'error');
@@ -819,77 +1192,98 @@ function guardarRegistroSanitario() {
       }
       const caravana = caravanaRaw.toUpperCase();
 
-      // Buscar el índice del animal en el array de inventario
-      const idx = inventario.findIndex((a) => a.caravana_id === caravana);
-      if (idx === -1) {
+      // Buscar el animal en Firestore para el operario actual
+      const snap = await db.collection('animales')
+        .where('operario_uid', '==', usuarioActual.uid)
+        .where('caravana_id', '==', caravana)
+        .limit(1)
+        .get();
+
+      if (snap.empty) {
         mostrarToast(`❌ Caravana "${caravana}" no encontrada en el inventario.`, 'error', 5000);
         document.getElementById('input-caravana-salud')?.focus();
         return;
       }
 
+      const doc = snap.docs[0];
+      const animal = doc.data();
+
       // Garantizar que el array historial existe antes de empujar
-      if (!Array.isArray(inventario[idx].historial_sanitario)) {
-        inventario[idx].historial_sanitario = [];
+      if (!Array.isArray(animal.historial_sanitario)) {
+        animal.historial_sanitario = [];
       }
-      inventario[idx].historial_sanitario.push(registro);
+      animal.historial_sanitario.push(registro);
 
-      // Si hay carencia, actualizar la fecha en la raíz del animal
-      // para que listarAnimalesLocales() pueda mostrar el badge de retiro
+      // Si hay carencia, actualizar la fecha en el animal
       if (fechaLimiteCarencia) {
-        inventario[idx].fecha_limite_carencia = fechaLimiteCarencia;
+        animal.fecha_limite_carencia = fechaLimiteCarencia;
       }
-      inventario[idx].sincronizado       = false;
-      inventario[idx].fechaModificacion  = ahora.toISOString();
+      animal.fechaModificacion = ahora.toISOString();
 
-      // Persistir y notificar
-      escribirStorage(CLAVES_STORAGE.INVENTARIO, inventario);
+      // Actualizar el documento en Firestore
+      await db.collection('animales').doc(doc.id).update({
+        historial_sanitario:   animal.historial_sanitario,
+        fecha_limite_carencia: animal.fecha_limite_carencia || null,
+        fechaModificacion:     animal.fechaModificacion
+      });
+
       mostrarToast(`✅ Registro sanitario guardado para ${caravana}.`, 'exito');
-      console.log(`[Sanidad] ✅ Registro individual → ${caravana}`, registro);
+      console.log(`[Sanidad] ✅ Registro individual en Firestore → ${caravana}`, registro);
 
       // Mostrar historial rápido del animal en el mismo formulario
-      mostrarHistorialRapido(inventario[idx]);
+      mostrarHistorialRapido(animal);
 
     } else {
-      // ── MODO POR LOTE: aplicar a todos los animales de la categoría ──
+      // ── MODO POR LOTE: aplicar a todos los animales de la categoría en Firestore ──
       const categoriaLote = document.getElementById('sel-categoria-salud')?.value || '';
       if (!categoriaLote) {
         mostrarToast('⚠️ Seleccioná una categoría para el lote.', 'error');
         return;
       }
 
-      let contadorAfectados = 0;
+      const snap = await db.collection('animales')
+        .where('operario_uid', '==', usuarioActual.uid)
+        .where('categoria', '==', categoriaLote)
+        .get();
 
-      // Recorrer inventario e inyectar el registro en los animales del lote
-      inventario.forEach((animal, idx) => {
-        if (animal.categoria === categoriaLote) {
-          if (!Array.isArray(inventario[idx].historial_sanitario)) {
-            inventario[idx].historial_sanitario = [];
-          }
-          // Cada animal recibe su propia copia con ID único
-          inventario[idx].historial_sanitario.push({ ...registro, id: generarId() });
-
-          if (fechaLimiteCarencia) {
-            inventario[idx].fecha_limite_carencia = fechaLimiteCarencia;
-          }
-          inventario[idx].sincronizado      = false;
-          inventario[idx].fechaModificacion = ahora.toISOString();
-          contadorAfectados++;
-        }
-      });
-
-      if (contadorAfectados === 0) {
+      if (snap.empty) {
         mostrarToast('⚠️ No hay animales registrados en esa categoría.', 'error', 5000);
         return;
       }
 
-      // Persistir y notificar
-      escribirStorage(CLAVES_STORAGE.INVENTARIO, inventario);
+      const batch = db.batch();
+      let contadorAfectados = 0;
+
+      snap.docs.forEach((doc) => {
+        const animal = doc.data();
+        if (!Array.isArray(animal.historial_sanitario)) {
+          animal.historial_sanitario = [];
+        }
+        // Cada animal recibe su propia copia con ID único
+        const copiaRegistro = { ...registro, id: generarId() };
+        animal.historial_sanitario.push(copiaRegistro);
+
+        const camposActualizar = {
+          historial_sanitario: animal.historial_sanitario,
+          fechaModificacion: ahora.toISOString()
+        };
+
+        if (fechaLimiteCarencia) {
+          camposActualizar.fecha_limite_carencia = fechaLimiteCarencia;
+        }
+
+        batch.update(doc.ref, camposActualizar);
+        contadorAfectados++;
+      });
+
+      await batch.commit();
+
       const pluralAnimal = contadorAfectados !== 1 ? 'animales' : 'animal';
       mostrarToast(
         `✅ Registro aplicado a ${contadorAfectados} ${pluralAnimal} del lote.`,
         'exito', 5000
       );
-      console.log(`[Sanidad] ✅ Registro por lote → ${categoriaLote} (${contadorAfectados} animales)`, registro);
+      console.log(`[Sanidad] ✅ Registro por lote en Firestore → ${categoriaLote} (${contadorAfectados} animales)`, registro);
 
       // Mostrar confirmación en el historial rápido
       const contenedorHistorial = document.getElementById('historial-sanitarios-rapido');
@@ -906,8 +1300,8 @@ function guardarRegistroSanitario() {
     limpiarFormularioSalud();
 
   } catch (error) {
-    console.error('[Sanidad] ❌ Error inesperado al guardar registro sanitario:', error);
-    mostrarToast('Error inesperado al guardar. Intentá de nuevo.', 'error');
+    console.error('[Sanidad] ❌ Error al guardar registro sanitario en Firestore:', error);
+    mostrarToast('Error al guardar en la nube. Verificá tu conexión.', 'error');
   }
 }
 
@@ -1141,6 +1535,46 @@ function inicializarModuloSalud() {
     });
   }
 
+  // ── Consulta rápida de historial al escribir caravana ──
+  const inputCaravanaSalud = document.getElementById('input-caravana-salud');
+  if (inputCaravanaSalud) {
+    const buscarHistorial = async () => {
+      const caravanaRaw = inputCaravanaSalud.value?.trim() || '';
+      const contenedorHistorial = document.getElementById('historial-sanitarios-rapido');
+      if (!contenedorHistorial) return;
+
+      if (!caravanaRaw) {
+        contenedorHistorial.innerHTML = '';
+        return;
+      }
+
+      if (!usuarioActual) return;
+
+      try {
+        const snap = await db.collection('animales')
+          .where('operario_uid', '==', usuarioActual.uid)
+          .where('caravana_id', '==', caravanaRaw.toUpperCase())
+          .limit(1)
+          .get();
+
+        if (!snap.empty) {
+          const animal = snap.docs[0].data();
+          mostrarHistorialRapido(animal);
+        } else {
+          contenedorHistorial.innerHTML = `
+            <p class="historial-vacio" style="color: #e74c3c;">
+              ⚠️ El animal con caravana <strong>${caravanaRaw.toUpperCase()}</strong> no existe en el inventario.
+            </p>`;
+        }
+      } catch (error) {
+        console.error('[Sanidad] ❌ Error en consulta rápida de historial:', error);
+      }
+    };
+
+    inputCaravanaSalud.addEventListener('blur', buscarHistorial);
+    inputCaravanaSalud.addEventListener('change', buscarHistorial);
+  }
+
   // ── Botón principal de guardado ──
   document.getElementById('btn-guardar-salud')
     ?.addEventListener('click', guardarRegistroSanitario);
@@ -1276,37 +1710,70 @@ function inicializarVistaTarea() {
 /**
  * Guarda la tarea de manejo en LocalStorage.
  */
-function guardarTareaManejo(tarea, ambito, fecha, observaciones) {
+/**
+ * Guarda la tarea de manejo en Firestore.
+ */
+async function guardarTareaManejo(tarea, ambito, fecha, observaciones) {
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada.', 'error');
+    return;
+  }
+
   try {
-    const agenda = leerStorage(CLAVES_STORAGE.AGENDA) || [];
-    
     const nuevaTarea = {
-      id: generarId(),
-      tarea: sanitizarTexto(tarea),
-      ambito: sanitizarTexto(ambito),
+      operario_uid:    usuarioActual.uid,
+      operario_email:  usuarioActual.email,
+      tarea:           sanitizarTexto(tarea),
+      ambito:          sanitizarTexto(ambito),
       fechaProgramada: fecha, // Formato YYYY-MM-DD
-      observaciones: sanitizarTexto(observaciones),
-      completada: false,
-      sincronizado: false,
-      fechaCreacion: new Date().toISOString()
+      observaciones:   sanitizarTexto(observaciones),
+      completada:      false,
+      fechaCreacion:   new Date().toISOString()
     };
 
-    agenda.push(nuevaTarea);
-    escribirStorage(CLAVES_STORAGE.AGENDA, agenda);
+    await db.collection('tareas').add(nuevaTarea);
+    console.log('[Agenda] ✅ Tarea guardada en Firestore:', nuevaTarea.tarea);
   } catch (error) {
-    console.error('[Agenda] ❌ Error al guardar tarea:', error);
+    console.error('[Agenda] ❌ Error al guardar tarea en Firestore:', error);
+    mostrarToast('Error al guardar la tarea en la nube.', 'error');
   }
 }
 
 /**
- * Renderiza la lista de tareas de la agenda, filtrando según estado.
+ * Suscribe un listener en tiempo real (onSnapshot) para las tareas de la Agenda
+ * en Firestore, filtradas por el operario autenticado.
  */
-function listarAgendaLocal() {
+function suscribirTareasEnTiempoReal() {
+  if (desuscribirTareas) {
+    desuscribirTareas();
+  }
+
+  if (!usuarioActual) return;
+
+  const consulta = db.collection('tareas')
+    .where('operario_uid', '==', usuarioActual.uid);
+
+  desuscribirTareas = consulta.onSnapshot(
+    (snapshot) => {
+      const tareas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      console.log(`[Agenda] ✅ onSnapshot: ${tareas.length} tareas.`);
+      renderizarTareas(tareas);
+      actualizarAlertasInicio(tareas);
+    },
+    (error) => {
+      console.error('[Agenda] ❌ Error en onSnapshot de tareas:', error);
+    }
+  );
+}
+
+/**
+ * Renderiza la lista de tareas en la UI filtrando según el tab activo.
+ */
+function renderizarTareas(agenda) {
   const contenedor = document.getElementById('lista-agenda-local');
   if (!contenedor) return;
 
   try {
-    const agenda = leerStorage(CLAVES_STORAGE.AGENDA) || [];
     const filtradas = agenda.filter(t => filtroAgendaActivo === 'pendientes' ? !t.completada : t.completada);
     
     // Ordenar por fecha (más cercanas primero para pendientes, más recientes primero para historial)
@@ -1359,39 +1826,45 @@ function listarAgendaLocal() {
 
     contenedor.innerHTML = html;
   } catch (error) {
-    console.error('[Agenda] ❌ Error al listar tareas:', error);
+    console.error('[Agenda] ❌ Error al renderizar tareas:', error);
   }
 }
 
 /**
- * Marca una tarea como completada por su ID.
+ * Compatibilidad: listarAgendaLocal activa la suscripción en tiempo real.
  */
-window.completarTareaManejo = function(idTarea) {
+function listarAgendaLocal() {
+  if (!desuscribirTareas && usuarioActual) {
+    suscribirTareasEnTiempoReal();
+  }
+}
+
+/**
+ * Marca una tarea como completada en Firestore.
+ */
+window.completarTareaManejo = async function(idTarea) {
   try {
-    const agenda = leerStorage(CLAVES_STORAGE.AGENDA) || [];
-    const index = agenda.findIndex(t => t.id === idTarea);
-    if (index !== -1) {
-      agenda[index].completada = true;
-      agenda[index].sincronizado = false;
-      escribirStorage(CLAVES_STORAGE.AGENDA, agenda);
-      listarAgendaLocal();
-      actualizarAlertasInicio();
-      mostrarToast('✅ Tarea marcada como completada.', 'exito');
-    }
+    await db.collection('tareas').doc(idTarea).update({
+      completada: true,
+      fechaModificacion: new Date().toISOString()
+    });
+    mostrarToast('✅ Tarea marcada como completada.', 'exito');
   } catch (error) {
-    console.error('[Agenda] ❌ Error al completar tarea:', error);
+    console.error('[Agenda] ❌ Error al completar tarea en Firestore:', error);
+    mostrarToast('Error al completar la tarea en la nube.', 'error');
   }
 };
 
 /**
  * Actualiza el panel de inicio con las tareas pendientes urgentes.
  */
-window.actualizarAlertasInicio = function() {
+window.actualizarAlertasInicio = function(agendaRecibida) {
   const contenedor = document.getElementById('contenedor-alertas-urgentes');
   if (!contenedor) return;
 
   try {
-    const agenda = leerStorage(CLAVES_STORAGE.AGENDA) || [];
+    // Si no recibimos agenda, la inicializamos vacía
+    const agenda = Array.isArray(agendaRecibida) ? agendaRecibida : [];
     const pendientes = agenda.filter(t => !t.completada);
     
     if (pendientes.length === 0) {
@@ -1450,35 +1923,7 @@ window.actualizarAlertasInicio = function() {
    Registra el SW para habilitar el modo Offline-First.
 ============================================================ */
 
-/**
- * Registra el Service Worker si el navegador lo soporta.
- * El SW interceptará las peticiones de red y servirá la app desde caché.
- */
-function registrarServiceWorker() {
-  if (!('serviceWorker' in navigator)) {
-    console.warn('[SW] ⚠️ Este navegador no soporta Service Workers.');
-    return;
-  }
 
-  // Esperar a que la página cargue completamente antes de registrar el SW
-  window.addEventListener('load', async () => {
-    try {
-      const registro = await navigator.serviceWorker.register('./sw.js', {
-        scope: './',
-      });
-      console.log('[SW] ✅ Service Worker registrado con éxito. Scope:', registro.scope);
-
-      // Escuchar cuando hay una nueva versión disponible del SW
-      registro.addEventListener('updatefound', () => {
-        console.log('[SW] 🔄 Nueva versión de la app disponible. Instalando...');
-        mostrarToast('🔄 Actualizando la app... Recargá cuando termines.', 'info', 6000);
-      });
-
-    } catch (error) {
-      console.error('[SW] ❌ Error al registrar el Service Worker:', error);
-    }
-  });
-}
 
 
 /* ============================================================
@@ -1487,43 +1932,46 @@ function registrarServiceWorker() {
    los módulos en el orden correcto.
 ============================================================ */
 
+let appInicializada = false;
+
 /**
- * Función principal de arranque de OvIAgro.
- * Se ejecuta cuando el DOM está completamente cargado.
+ * Inicializa la estructura base y los listeners de la aplicación una única vez.
+ * Esto evita duplicar los event listeners del DOM tras múltiples inicios de sesión.
  */
-function inicializarApp() {
-  console.log('🐑 OvIAgro La Rioja — Iniciando aplicación...');
+function inicializarAppUnaVez() {
+  if (appInicializada) return;
+  console.log('🐑 OvIAgro — Inicializando estructura base y listeners del DOM...');
 
-  // 1. Registrar el Service Worker (PWA Offline)
-  registrarServiceWorker();
-
-  // 2. Inicializar el almacenamiento local con estructuras vacías
-  inicializarStorage();
-
-  // 3. Arrancar el enrutador SPA (muestra la vista inicial)
+  // 1. Arrancar el enrutador SPA (muestra la vista inicial)
   inicializarRouter();
 
-  // 4. Conectar los eventos de la vista Inicio
+  // 2. Conectar los eventos de la vista Inicio
   inicializarVistaInicio();
 
-  // 5. Conectar los eventos del formulario de Alta de Animal
+  // 3. Conectar los eventos del formulario de Alta de Animal
   inicializarFormularioAlta();
 
-  // 6. Inicializar el módulo de Salud (sanitario)
+  // 4. Inicializar el módulo de Salud (sanitario)
   inicializarModuloSalud();
 
-  // 7. Inicializar el módulo de Tareas de Campo
+  // 5. Inicializar el módulo de Tareas de Campo
   inicializarVistaTarea();
-  // Mostramos las alertas en inicio al arrancar
-  actualizarAlertasInicio();
 
-  console.log('✅ OvIAgro listo para trabajar en el campo.');
+  appInicializada = true;
+  console.log('✅ Estructura base inicializada correctamente.');
+}
+
+/**
+ * Punto de entrada inicial al cargar el documento.
+ * Espera a que Auth determine el estado.
+ */
+function arrancarAplicacion() {
+  console.log('🐑 OvIAgro — Estructura del DOM lista. Esperando autenticación...');
 }
 
 // --- Punto de entrada: esperar a que el DOM esté listo ---
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', inicializarApp);
+  document.addEventListener('DOMContentLoaded', arrancarAplicacion);
 } else {
-  // El DOM ya estaba listo (caso raro, pero seguro manejarlo)
-  inicializarApp();
+  arrancarAplicacion();
 }
