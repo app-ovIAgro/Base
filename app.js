@@ -952,12 +952,13 @@ function renderizarInventario(inventario) {
 
 /**
  * Se suscribe en tiempo real a los animales en Firestore de forma segura.
- * Si no hay animales (querySnapshot.empty), limpia la tabla y muestra el estado vacío.
- * Registra errores técnicos solo en consola sin perturbar al usuario con ventanas emergentes.
+ * Si no hay animales (snapshot.empty === true), muestra el estado vacío sin errores.
+ * Solo usa console.error() para errores reales de red o permisos.
+ * Ordenamiento por fecha hecho en cliente para evitar errores de índice en BD nueva.
  */
 function listarAnimalesLocales() {
   if (desuscribirAnimales) {
-    return; // Ya existe una suscripción activa
+    return; // Ya existe una suscripción activa, no crear otra
   }
 
   if (!usuarioActual) {
@@ -966,19 +967,28 @@ function listarAnimalesLocales() {
   }
 
   try {
+    // Consulta SIN orderBy para evitar requerir un índice compuesto en Firestore.
+    // El ordenamiento se aplica en el cliente, lo que es correcto para un inventario de campo.
     const consulta = db.collection('animales')
-      .where('operario_uid', '==', usuarioActual.uid)
-      .orderBy('fechaAlta', 'desc');
+      .where('operario_uid', '==', usuarioActual.uid);
 
     desuscribirAnimales = consulta.onSnapshot(
       (snapshot) => {
         try {
           if (!snapshot || snapshot.empty) {
-            console.log('[Inventario] ℹ️ Base de datos vacía o sin animales registrados para este operario.');
+            // Estado completamente normal: base de datos vacía o sin animales para este usuario
+            console.log('[Inventario] ℹ️ Sin animales registrados para este operario.');
             renderizarInventario([]);
             return;
           }
-          const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          // Mapear documentos y ordenar por fechaAlta descendente en el cliente
+          const inventario = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .sort((a, b) => {
+              const fa = a.fechaAlta ? new Date(a.fechaAlta) : new Date(0);
+              const fb = b.fechaAlta ? new Date(b.fechaAlta) : new Date(0);
+              return fb - fa;
+            });
           renderizarInventario(inventario);
           console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
         } catch (innerErr) {
@@ -986,14 +996,13 @@ function listarAnimalesLocales() {
         }
       },
       (error) => {
-        // Reportar el error únicamente en consola para diagnóstico técnico
-        console.error('[Inventario] ❌ Error al obtener animales de Firestore:', error);
-        // Dejar la interfaz limpia en 0 de forma amigable
+        // Error real (permisos, red) — solo en consola, nunca interrumpe al usuario
+        console.error('[Inventario] ❌ Error Firestore en animales:', error);
         renderizarInventario([]);
       }
     );
   } catch (err) {
-    console.error('[Inventario] ❌ Error al inicializar onSnapshot de animales:', err);
+    console.error('[Inventario] ❌ Error al inicializar suscripción de animales:', err);
   }
 }
 
