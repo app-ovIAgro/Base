@@ -854,6 +854,7 @@ function suscribirAnimalesEnTiempoReal() {
   // Cancelar suscripción previa para evitar duplicados de listeners
   if (desuscribirAnimales) {
     desuscribirAnimales();
+    desuscribirAnimales = null;
   }
 
   if (!usuarioActual) {
@@ -861,24 +862,38 @@ function suscribirAnimalesEnTiempoReal() {
     return;
   }
 
-  // Consulta filtrada: solo los animales de ESTE operario, por fecha desc
-  const consulta = db.collection('animales')
-    .where('operario_uid', '==', usuarioActual.uid)
-    .orderBy('fechaAlta', 'desc');
+  try {
+    // Consulta filtrada: solo los animales de ESTE operario, por fecha desc
+    const consulta = db.collection('animales')
+      .where('operario_uid', '==', usuarioActual.uid)
+      .orderBy('fechaAlta', 'desc');
 
-  // onSnapshot se dispara con datos de caché offline o de la red.
-  // Funciona aunque el dispositivo no tenga conexión a internet.
-  desuscribirAnimales = consulta.onSnapshot(
-    (snapshot) => {
-      const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      renderizarInventario(inventario);
-      console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
-    },
-    (error) => {
-      console.error('[Inventario] ❌ Error en onSnapshot:', error);
-      mostrarToast('Error al cargar el inventario.', 'error');
-    }
-  );
+    // onSnapshot se dispara con datos de caché offline o de la red.
+    desuscribirAnimales = consulta.onSnapshot(
+      (snapshot) => {
+        try {
+          if (!snapshot || snapshot.empty) {
+            console.log('[Inventario] ℹ️ Base de datos vacía o sin animales registrados para este operario.');
+            renderizarInventario([]);
+            return;
+          }
+          const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          renderizarInventario(inventario);
+          console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
+        } catch (innerErr) {
+          console.error('[Inventario] ❌ Error al procesar snapshot de animales:', innerErr);
+        }
+      },
+      (error) => {
+        // En una base de datos recién creada o vacía sin documentos, o si falta el índice,
+        // evitamos mostrar una alerta visual ruidosa (toast) y manejamos el estado vacío de forma limpia.
+        console.warn('[Inventario] ⚠️ Consulta de animales vacía, requiere inicialización o índice:', error);
+        renderizarInventario([]);
+      }
+    );
+  } catch (error) {
+    console.error('[Inventario] ❌ Error en setup de onSnapshot de animales:', error);
+  }
 }
 
 /**
