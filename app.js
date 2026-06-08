@@ -851,49 +851,7 @@ async function guardarAnimalLocal(nuevoAnimal) {
  * La referencia de desuscripción se guarda en 'desuscribirAnimales'.
  */
 function suscribirAnimalesEnTiempoReal() {
-  // Cancelar suscripción previa para evitar duplicados de listeners
-  if (desuscribirAnimales) {
-    desuscribirAnimales();
-    desuscribirAnimales = null;
-  }
-
-  if (!usuarioActual) {
-    console.warn('[Inventario] ⚠️ No hay operario autenticado.');
-    return;
-  }
-
-  try {
-    // Consulta filtrada: solo los animales de ESTE operario, por fecha desc
-    const consulta = db.collection('animales')
-      .where('operario_uid', '==', usuarioActual.uid)
-      .orderBy('fechaAlta', 'desc');
-
-    // onSnapshot se dispara con datos de caché offline o de la red.
-    desuscribirAnimales = consulta.onSnapshot(
-      (snapshot) => {
-        try {
-          if (!snapshot || snapshot.empty) {
-            console.log('[Inventario] ℹ️ Base de datos vacía o sin animales registrados para este operario.');
-            renderizarInventario([]);
-            return;
-          }
-          const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-          renderizarInventario(inventario);
-          console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
-        } catch (innerErr) {
-          console.error('[Inventario] ❌ Error al procesar snapshot de animales:', innerErr);
-        }
-      },
-      (error) => {
-        // En una base de datos recién creada o vacía sin documentos, o si falta el índice,
-        // evitamos mostrar una alerta visual ruidosa (toast) y manejamos el estado vacío de forma limpia.
-        console.warn('[Inventario] ⚠️ Consulta de animales vacía, requiere inicialización o índice:', error);
-        renderizarInventario([]);
-      }
-    );
-  } catch (error) {
-    console.error('[Inventario] ❌ Error en setup de onSnapshot de animales:', error);
-  }
+  listarAnimalesLocales();
 }
 
 /**
@@ -957,12 +915,49 @@ function renderizarInventario(inventario) {
 }
 
 /**
- * Compatibilidad: listarAnimalesLocales activa la suscripción en tiempo real.
- * Las llamadas desde el router SPA siguen funcionando sin cambios.
+ * Se suscribe en tiempo real a los animales en Firestore de forma segura.
+ * Si no hay animales (querySnapshot.empty), limpia la tabla y muestra el estado vacío.
+ * Registra errores técnicos solo en consola sin perturbar al usuario con ventanas emergentes.
  */
 function listarAnimalesLocales() {
-  if (!desuscribirAnimales && usuarioActual) {
-    suscribirAnimalesEnTiempoReal();
+  if (desuscribirAnimales) {
+    return; // Ya existe una suscripción activa
+  }
+
+  if (!usuarioActual) {
+    console.warn('[Inventario] ⚠️ No hay operario autenticado.');
+    return;
+  }
+
+  try {
+    const consulta = db.collection('animales')
+      .where('operario_uid', '==', usuarioActual.uid)
+      .orderBy('fechaAlta', 'desc');
+
+    desuscribirAnimales = consulta.onSnapshot(
+      (snapshot) => {
+        try {
+          if (!snapshot || snapshot.empty) {
+            console.log('[Inventario] ℹ️ Base de datos vacía o sin animales registrados para este operario.');
+            renderizarInventario([]);
+            return;
+          }
+          const inventario = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          renderizarInventario(inventario);
+          console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
+        } catch (innerErr) {
+          console.error('[Inventario] ❌ Error procesando snapshot de animales:', innerErr);
+        }
+      },
+      (error) => {
+        // Reportar el error únicamente en consola para diagnóstico técnico
+        console.error('[Inventario] ❌ Error al obtener animales de Firestore:', error);
+        // Dejar la interfaz limpia en 0 de forma amigable
+        renderizarInventario([]);
+      }
+    );
+  } catch (err) {
+    console.error('[Inventario] ❌ Error al inicializar onSnapshot de animales:', err);
   }
 }
 
