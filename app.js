@@ -46,6 +46,39 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+/* ============================================================
+   EVENTOS DE INSTALACIÓN PWA (Instalar en Pantalla de Inicio)
+   Captura el prompt de instalación nativo para ofrecerlo
+   de forma explícita al usuario a través de un botón.
+ ============================================================ */
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Prevenir que el navegador muestre automáticamente el prompt
+  e.preventDefault();
+  // Guardar el evento para dispararlo luego
+  deferredPrompt = e;
+  console.log('[PWA] 📲 Evento beforeinstallprompt capturado.');
+
+  // Mostrar el botón de instalación si está disponible en el DOM
+  const btnInstalar = document.getElementById('btn-instalar-pwa');
+  if (btnInstalar) {
+    btnInstalar.style.display = 'block';
+  }
+});
+
+window.addEventListener('appinstalled', (e) => {
+  console.log('[PWA] 🐑 Aplicación instalada con éxito.');
+  // Limpiar el deferredPrompt
+  deferredPrompt = null;
+  // Ocultar el botón si siguiera visible
+  const btnInstalar = document.getElementById('btn-instalar-pwa');
+  if (btnInstalar) {
+    btnInstalar.style.display = 'none';
+  }
+  // Lanzar confirmación amigable en pantalla
+  mostrarToast('¡OvIAgro instalada con éxito en tu pantalla de inicio! 🐑', 'exito', 5000);
+});
+
 
 /* ============================================================
    MÓDULO 1: CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
@@ -110,6 +143,9 @@ let usuarioActual = null;
 
 /** @type {Function|null} Función de desuscripción del listener de Firestore en tiempo real */
 let desuscribirAnimales = null;
+
+/** @type {Object|null} Evento diferido para la instalación PWA */
+let deferredPrompt = null;
 
 /**
  * Dispara el flujo de autenticación con Google mediante un popup.
@@ -1107,6 +1143,35 @@ function inicializarVistaInicio() {
 
   document.getElementById('btn-guardar-predio')
     ?.addEventListener('click', guardarDatosPredio);
+
+  // Configurar el botón de instalación PWA
+  const btnInstalar = document.getElementById('btn-instalar-pwa');
+  if (btnInstalar) {
+    btnInstalar.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+
+      try {
+        // Mostrar el prompt nativo de instalación
+        deferredPrompt.prompt();
+
+        // Esperar la elección del usuario
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`[PWA] Elección de instalación del usuario: ${outcome}`);
+      } catch (err) {
+        console.error('[PWA] ❌ Error en el prompt de instalación:', err);
+      } finally {
+        // Ocultar el botón e invalidar el evento diferido
+        btnInstalar.style.display = 'none';
+        deferredPrompt = null;
+      }
+    });
+
+    // Si por alguna razón el prompt se disparó antes de inicializar la vista,
+    // y deferredPrompt ya está seteado, mostramos el botón de inmediato.
+    if (deferredPrompt) {
+      btnInstalar.style.display = 'block';
+    }
+  }
 }
 
 
