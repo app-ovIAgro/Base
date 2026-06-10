@@ -889,6 +889,33 @@
       margin-top: 10px;
     }
 
+    /* --- Botón de Instalación PWA --- */
+    /* Visible solo cuando el navegador confirma que la app es instalable */
+    #btnInstalar {
+      width: 100%;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      background-color: #2ecc71;       /* Verde acción de alta visibilidad */
+      color: #000000;                  /* Negro para máximo contraste solar */
+      font-family: var(--fuente-principal);
+      font-size: 1.15rem;
+      font-weight: 900;
+      border: 3px solid #27ae60;       /* Borde verde oscuro para profundidad */
+      border-radius: var(--radio-borde);
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      box-shadow: 0 6px 20px rgba(46,204,113,0.45);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+    #btnInstalar:hover {
+      background-color: #27ae60;
+      box-shadow: 0 8px 28px rgba(46,204,113,0.6);
+    }
+    #btnInstalar:active {
+      transform: scale(0.97);
+      filter: brightness(0.92);
+    }
+
     /* ============================================================
        VISTA: INVENTARIO — Tarjetas de animal
     ============================================================ */
@@ -1384,9 +1411,19 @@
         </span>
       </div>
 
-      <!-- Botón de instalación PWA (inicialmente oculto) -->
-      <button id="btn-instalar-pwa" class="btn-grande" style="display: none; margin-bottom: 20px; font-weight: bold; background: linear-gradient(135deg, var(--color-primario) 0%, var(--color-primario-claro) 100%); color: white; border: none; box-shadow: 0 4px 15px rgba(76,175,80,0.4);" type="button" aria-label="Instalar aplicación en este dispositivo">
-        📲 Instalar OvIAgro en este dispositivo
+      <!-- ============================================================
+           BOTÓN DE DESCARGA E INSTALACIÓN PWA
+           Permanece oculto (display:none) hasta que el navegador
+           confirma que la app cumple los criterios de instalación.
+           JavaScript lo muestra mediante el evento beforeinstallprompt.
+      ============================================================ -->
+      <button
+        id="btnInstalar"
+        type="button"
+        style="display: none;"
+        aria-label="Descargar e instalar OvIAgro en este dispositivo"
+      >
+        📲 Descargar e Instalar OvIAgro
       </button>
 
       <!-- Panel de Alertas de Tareas de Campo -->

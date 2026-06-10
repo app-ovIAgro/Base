@@ -22,6 +22,16 @@
 'use strict';
 
 /* ============================================================
+   VARIABLE GLOBAL: PROMPT DIFERIDO DE INSTALACIÓN PWA
+   Se declara AQUÍ, en el ámbito global y fuera de cualquier función,
+   para que tanto el evento 'beforeinstallprompt' como el listener
+   del botón puedan acceder y modificarla sin conflictos.
+============================================================ */
+
+/** @type {Event|null} Guarda el evento de instalación para dispararlo luego */
+let deferredPrompt = null;
+
+/* ============================================================
    MÓDULO 0: REGISTRO DEL SERVICE WORKER (PWA)
    Se registra PRIMERO, antes de cualquier otra inicialización,
    para activar el motor offline lo antes posible.
@@ -53,28 +63,24 @@ if ('serviceWorker' in navigator) {
  ============================================================ */
 
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Prevenir que el navegador muestre automáticamente el prompt
+  // Evita que el navegador muestre su propio cartel de instalación automáticamente
   e.preventDefault();
-  // Guardar el evento para dispararlo luego
+  // Guardamos el evento para poder dispararlo más tarde con nuestro botón propio
   deferredPrompt = e;
-  console.log('[PWA] 📲 Evento beforeinstallprompt capturado.');
+  console.log('[PWA] 📲 Evento beforeinstallprompt capturado. La app es instalable.');
 
-  // Mostrar el botón de instalación si está disponible en el DOM
-  const btnInstalar = document.getElementById('btn-instalar-pwa');
-  if (btnInstalar) {
-    btnInstalar.style.display = 'block';
-  }
+  // Mostrar nuestro botón personalizado de instalación
+  const btn = document.getElementById('btnInstalar');
+  if (btn) btn.style.display = 'block';
 });
 
 window.addEventListener('appinstalled', (e) => {
   console.log('[PWA] 🐑 Aplicación instalada con éxito.');
-  // Limpiar el deferredPrompt
+  // Limpiar el deferredPrompt ya que fue consumido
   deferredPrompt = null;
   // Ocultar el botón si siguiera visible
-  const btnInstalar = document.getElementById('btn-instalar-pwa');
-  if (btnInstalar) {
-    btnInstalar.style.display = 'none';
-  }
+  const btn = document.getElementById('btnInstalar');
+  if (btn) btn.style.display = 'none';
   // Lanzar confirmación amigable en pantalla
   mostrarToast('¡OvIAgro instalada con éxito en tu pantalla de inicio! 🐑', 'exito', 5000);
 });
@@ -143,9 +149,6 @@ let usuarioActual = null;
 
 /** @type {Function|null} Función de desuscripción del listener de Firestore en tiempo real */
 let desuscribirAnimales = null;
-
-/** @type {Object|null} Evento diferido para la instalación PWA */
-let deferredPrompt = null;
 
 /**
  * Dispara el flujo de autenticación con Google mediante un popup.
@@ -398,9 +401,42 @@ function suscribirPredioEnTiempoReal() {
  * Se ejecuta apenas el DOM está listo para no perder el evento.
  */
 document.addEventListener('DOMContentLoaded', () => {
+  // --- Conectar botón de Login con Google ---
   const btnLogin = document.getElementById('btn-google-login');
   if (btnLogin) {
     btnLogin.addEventListener('click', iniciarSesionConGoogle);
+  }
+
+  // --- Lógica del Botón de Instalación PWA (id="btnInstalar") ---
+  // Este botón solo es visible si el navegador disparó 'beforeinstallprompt'.
+  // Al presionarlo, mostramos el prompt nativo de instalación del navegador.
+  const btnInstalar = document.getElementById('btnInstalar');
+  if (btnInstalar) {
+    btnInstalar.addEventListener('click', async () => {
+      // Verificar que el prompt diferido esté disponible
+      if (!deferredPrompt) {
+        console.warn('[PWA] No hay prompt de instalación disponible.');
+        return;
+      }
+
+      // Lanzar el diálogo nativo de instalación del sistema operativo
+      deferredPrompt.prompt();
+
+      // Esperar la decisión del operario (acepta o rechaza instalar)
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`[PWA] Decisión del operario: ${outcome}`);
+
+      // Independientemente de la respuesta, ocultar el botón y
+      // resetear la variable. El prompt solo puede usarse una vez.
+      btnInstalar.style.display = 'none';
+      deferredPrompt = null;
+
+      if (outcome === 'accepted') {
+        mostrarToast('¡Instalando OvIAgro... Chequeá tu pantalla de inicio 🐑', 'exito', 5000);
+      } else {
+        console.log('[PWA] El operario decidió no instalar por ahora.');
+      }
+    });
   }
 });
 

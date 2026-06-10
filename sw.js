@@ -28,7 +28,7 @@
 ============================================================ */
 
 /** Nombre único de esta versión de la caché */
-const NOMBRE_CACHE = 'oviagro-pwa-v1';
+const NOMBRE_CACHE = 'oviagro-pwa-v2';
 
 /**
  * Lista de archivos esenciales que se descargarán y guardarán
@@ -40,6 +40,9 @@ const ARCHIVOS_A_CACHEAR = [
   './index.html',
   './app.js',
   './manifest.json',
+  // Íconos obligatorios de la PWA (para instalación y pantalla de inicio)
+  './icons/icon-192x192.png',
+  './icons/icon-512x512.png',
 ];
 
 /**
