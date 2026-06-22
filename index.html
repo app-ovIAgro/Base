@@ -1330,6 +1330,111 @@
       display: none;
     }
     .login-cargando.visible { display: block; }
+
+    /* ============================================================
+       NUEVOS ESTILOS REESTRUCTURACIÓN UI
+    ============================================================ */
+    .btn-cerrar-sesion {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 16px;
+      background-color: var(--color-alerta);
+      color: #ffffff !important;
+      border: 2px solid #c0392b;
+      border-radius: var(--radio-borde);
+      font-family: var(--fuente-principal);
+      font-size: 0.9rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all var(--transicion);
+    }
+    .btn-cerrar-sesion:active {
+      transform: scale(0.95);
+    }
+    .tablero-contadores {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .contador-card {
+      background-color: #ffffff;
+      border: 2px solid #bdc3c7;
+      border-radius: var(--radio-borde);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      box-shadow: var(--sombra);
+    }
+    .contador-label {
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: #555555;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .contador-valor {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: #000000;
+      line-height: 1.1;
+    }
+    .tarjeta-tareas-inicio {
+      border: 2px solid #bdc3c7;
+    }
+    .seccion-tarea-hoy {
+      background-color: rgba(46,204,113,0.1);
+      border-left: 6px solid #2ecc71;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .subtitulo-tarea-destacada {
+      font-size: 0.95rem;
+      font-weight: 900;
+      color: #000000;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tarea-item-inicio {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      color: #000000;
+    }
+    .tarea-item-inicio:last-child {
+      border-bottom: none;
+    }
+    .tarea-info-inicio {
+      flex: 1;
+    }
+    .tarea-nombre-inicio {
+      font-size: 0.95rem;
+      font-weight: bold;
+    }
+    .tarea-fecha-inicio {
+      font-size: 0.8rem;
+      color: #555555;
+    }
+    .seccion-otras-tareas {
+      border-left: 6px solid #ff9800;
+      background-color: rgba(255,152,0,0.05);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .tarjeta-destacado-predio {
+      border: 3px solid #2ecc71;
+      background-color: rgba(46,204,113,0.03);
+      box-shadow: 0 4px 15px rgba(46,204,113,0.15);
+    }
   </style>
 </head>
 
@@ -1403,12 +1508,18 @@
         <h1>OvIAgro <span>Campo</span></h1>
       </header>
 
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div class="badge-offline" style="background-color: var(--color-primario); border-color: var(--color-primario-oscuro); color: white; margin-top: 0; display: inline-flex;">
+          Modo 100% Offline
+        </div>
+        <button id="btn-cerrar-sesion" class="btn-cerrar-sesion" type="button" aria-label="Cerrar Sesión">
+          🚪 Cerrar Sesión
+        </button>
+      </div>
+
       <div class="bienvenida-hero">
         <h2>Bienvenido al Campo</h2>
         <p>Registrá tu hacienda sin papel.<br>Funciona sin internet, en el corral.</p>
-        <span class="badge-offline">
-          Modo 100% Offline
-        </span>
       </div>
 
       <!-- ============================================================
@@ -1426,39 +1537,120 @@
         📲 Descargar e Instalar OvIAgro
       </button>
 
-      <!-- Panel de Alertas de Tareas de Campo -->
-      <div id="contenedor-alertas-urgentes" aria-live="polite">
-        <!-- Las alertas inyectadas por JS aparecerán aquí -->
-      </div>
-
-      <!-- Tarjeta: Datos del Predio -->
-      <div class="tarjeta">
-        <p class="tarjeta-titulo">Ubicación del Predio</p>
-
-        <div id="display-gps" class="info-gps" aria-live="polite" aria-label="Coordenadas GPS">
-          <span id="texto-gps">Coordenadas no registradas aún.</span>
+      <!-- Tarjeta Destacada: Datos del Predio y del Productor -->
+      <div class="tarjeta tarjeta-destacado-predio">
+        <p class="tarjeta-titulo">Configuración del Establecimiento</p>
+        
+        <div class="campo-grupo">
+          <label for="input-productor" class="campo-etiqueta requerido">Nombre del productor</label>
+          <input
+            id="input-productor"
+            type="text"
+            class="campo-input"
+            placeholder="Ej: Juan Pérez"
+            required
+            aria-required="true"
+          />
         </div>
 
-        <button id="btn-capturar-gps" class="btn-grande btn-primario" type="button" aria-label="Capturar coordenadas GPS del predio">
-          Capturar GPS del Predio
-        </button>
-      </div>
-
-      <!-- Tarjeta: Objetivo Productivo -->
-      <div class="tarjeta">
-        <p class="tarjeta-titulo">Objetivo Productivo</p>
         <div class="campo-grupo">
-          <label for="sel-objetivo" class="campo-etiqueta">¿Para qué producimos?</label>
-          <select id="sel-objetivo" class="campo-select" aria-label="Seleccionar objetivo productivo">
-            <option value="">— Seleccioná uno —</option>
-            <option value="lana">Lana</option>
-            <option value="carne">Carne</option>
-            <option value="leche">Leche</option>
+          <label for="input-establecimiento" class="campo-etiqueta requerido">Nombre del establecimiento / Predio</label>
+          <input
+            id="input-establecimiento"
+            type="text"
+            class="campo-input"
+            placeholder="Ej: La Estancia Alegre"
+            required
+            aria-required="true"
+          />
+        </div>
+
+        <div class="campo-grupo">
+          <label for="sel-objetivo" class="campo-etiqueta requerido">Objetivo Productivo</label>
+          <select id="sel-objetivo" class="campo-select" required aria-required="true">
+            <option value="">— Seleccioná el objetivo —</option>
+            <option value="Carne">Carne</option>
+            <option value="Lana">Lana</option>
+            <option value="Leche">Leche</option>
+            <option value="Pelo">Pelo</option>
+            <option value="Piel">Piel</option>
+            <option value="Doble propósito">Doble propósito</option>
           </select>
         </div>
-        <button id="btn-guardar-predio" class="btn-grande btn-secundario mt-8" type="button" aria-label="Guardar datos del predio">
+
+        <div class="campo-grupo">
+          <label class="campo-etiqueta">Ubicación del Predio (GPS)</label>
+          <div id="display-gps" class="info-gps" aria-live="polite" aria-label="Coordenadas GPS">
+            <span id="texto-gps">Coordenadas no registradas aún.</span>
+          </div>
+          <button id="btn-capturar-gps" class="btn-grande btn-secundario" type="button" aria-label="Capturar coordenadas GPS del predio">
+            Capturar GPS del Predio
+          </button>
+        </div>
+
+        <button id="btn-guardar-predio" class="btn-grande btn-primario mt-16" type="button" aria-label="Guardar datos del predio">
           Guardar Datos del Predio
         </button>
+      </div>
+
+      <!-- Tarjeta: Tareas Programadas de Campo -->
+      <div class="tarjeta tarjeta-tareas-inicio">
+        <p class="tarjeta-titulo">📋 Tareas del Campo</p>
+        
+        <!-- Apartado destacado para la Tarea de Hoy -->
+        <div id="seccion-tarea-hoy" class="seccion-tarea-hoy">
+          <div class="subtitulo-tarea-destacada">📌 Tarea de Hoy</div>
+          <div id="contenedor-tareas-hoy">
+            <!-- Tareas de hoy inyectada por JS -->
+          </div>
+        </div>
+        
+        <!-- Otras Tareas Programadas -->
+        <div id="seccion-otras-tareas" class="seccion-otras-tareas">
+          <div class="subtitulo-tarea-destacada">📅 Próximas Tareas</div>
+          <div id="contenedor-otras-tareas">
+            <!-- Otras tareas programadas inyectadas por JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Tarjeta: Tablero de Control y Contadores -->
+      <div class="tarjeta">
+        <p class="tarjeta-titulo">📊 Tablero de Control</p>
+        <div class="tablero-contadores">
+          <div class="contador-card" style="border-top: 5px solid #000000;">
+            <span class="contador-label">Total Animales</span>
+            <span class="contador-valor" id="totalAnimales">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #2ecc71;">
+            <span class="contador-label">Hembras</span>
+            <span class="contador-valor" id="totalHembras">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #3498db;">
+            <span class="contador-label">Machos</span>
+            <span class="contador-valor" id="totalMachos">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #e74c3c;">
+            <span class="contador-label">Castrados</span>
+            <span class="contador-valor" id="totalCastrados">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #9b59b6;">
+            <span class="contador-label">Ovejas</span>
+            <span class="contador-valor" id="totalOvejas">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #f1c40f;">
+            <span class="contador-label">Carneros</span>
+            <span class="contador-valor" id="totalCarneros">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #1abc9c;">
+            <span class="contador-label">Borregos</span>
+            <span class="contador-valor" id="totalBorregos">0</span>
+          </div>
+          <div class="contador-card" style="border-top: 5px solid #e67e22;">
+            <span class="contador-label">Corderos</span>
+            <span class="contador-valor" id="totalCorderos">0</span>
+          </div>
+        </div>
       </div>
 
     </section><!-- /vista-inicio -->
@@ -1531,20 +1723,27 @@
             </div>
           </div>
 
-          <!-- 4. Raza* -->
+          <!-- 4. Raza* (Híbrida con datalist) -->
           <div class="campo-grupo">
-            <label for="sel-raza" class="campo-etiqueta requerido">4. Raza</label>
-            <select id="sel-raza" class="campo-select" required aria-required="true">
-              <option value="">— Seleccioná la raza —</option>
-              <option value="Criolla">Criolla</option>
-              <option value="Hampshire Down">Hampshire Down</option>
-              <option value="Dorper">Dorper</option>
-              <option value="Texel">Texel</option>
-              <option value="Manchega">Manchega</option>
-              <option value="Merino">Merino</option>
-              <option value="Pampinta">Pampinta</option>
-              <option value="Cruza / Otra">Cruza / Otra</option>
-            </select>
+            <label for="input-raza" class="campo-etiqueta requerido">4. Raza</label>
+            <input
+              id="input-raza"
+              list="raza-list"
+              class="campo-input"
+              placeholder="Escribí o seleccioná la raza"
+              required
+              aria-required="true"
+            />
+            <datalist id="raza-list">
+              <option value="Criolla"></option>
+              <option value="Hampshire Down"></option>
+              <option value="Dorper"></option>
+              <option value="Texel"></option>
+              <option value="Manchega"></option>
+              <option value="Merino"></option>
+              <option value="Pampinta"></option>
+              <option value="Cruza"></option>
+            </datalist>
           </div>
 
           <!-- 5. Categoría por Dentición* -->
@@ -1583,13 +1782,33 @@
             />
           </div>
 
-          <!-- 8. ¿Está Castrado? -->
+          <!-- Peso al Destete (Opcional) -->
+          <div class="campo-grupo">
+            <label for="input-peso-destete" class="campo-etiqueta">Peso al destete (Kg)</label>
+            <input
+              id="input-peso-destete"
+              type="number"
+              step="0.1"
+              min="0"
+              class="campo-input"
+              placeholder="Opcional. Ej: 25.0"
+            />
+          </div>
+
+          <!-- 8. ¿Está Castrado? (Dos botones táctiles independientes y grandes) -->
           <div class="campo-grupo">
             <label class="campo-etiqueta">8. ¿Está Castrado?</label>
-            <input type="checkbox" id="checkbox-castrado" class="switch-gigante-input">
-            <label for="checkbox-castrado" class="opcion-tactil" style="justify-content: space-between;">
-              <span class="switch-gigante-texto">No castrado / Castrado</span>
-            </label>
+            <div class="radio-gigante-grupo">
+              <input type="radio" id="castrado-si" name="castrado" value="si" class="radio-gigante-input">
+              <label for="castrado-si" class="radio-gigante-label opcion-tactil">
+                SÍ
+              </label>
+              
+              <input type="radio" id="castrado-no" name="castrado" value="no" class="radio-gigante-input" checked>
+              <label for="castrado-no" class="radio-gigante-label opcion-tactil">
+                NO
+              </label>
+            </div>
           </div>
         </div>
 

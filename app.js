@@ -31,6 +31,9 @@
 /** @type {Event|null} Guarda el evento de instalación para dispararlo luego */
 let deferredPrompt = null;
 
+// Variable global para mantener el inventario en memoria caché local y actualizar los contadores
+let animalesCache = [];
+
 /* ============================================================
    MÓDULO 0: REGISTRO DEL SERVICE WORKER (PWA)
    Se registra PRIMERO, antes de cualquier otra inicialización,
@@ -284,7 +287,7 @@ async function migrarDatosLocalesAFirestore() {
   try {
     // 1. Migrar Predio local
     const predioLocal = leerStorage(CLAVES_STORAGE.PREDIO);
-    if (predioLocal && (predioLocal.objetivo || predioLocal.coordenadas)) {
+    if (predioLocal && (predioLocal.objetivo || predioLocal.coordenadas || predioLocal.productor || predioLocal.establecimiento)) {
       console.log('[Migración] 📦 Migrando predio local a Firestore...');
       await db.collection('predios').doc(usuarioActual.uid).set({
         ...predioLocal,
@@ -374,6 +377,8 @@ function suscribirPredioEnTiempoReal() {
         const predio = doc.data();
         const textoGPS = document.getElementById('texto-gps');
         const selObj   = document.getElementById('sel-objetivo');
+        const inputProd = document.getElementById('input-productor');
+        const inputEst = document.getElementById('input-establecimiento');
 
         if (predio.coordenadas && textoGPS) {
           const c = predio.coordenadas;
@@ -386,6 +391,12 @@ function suscribirPredioEnTiempoReal() {
 
         if (predio.objetivo && selObj) {
           selObj.value = predio.objetivo;
+        }
+        if (predio.productor && inputProd) {
+          inputProd.value = predio.productor;
+        }
+        if (predio.establecimiento && inputEst) {
+          inputEst.value = predio.establecimiento;
         }
       }
     },
@@ -767,10 +778,12 @@ function capturarGPS() {
  * Guarda el objetivo productivo seleccionado en el predio de Firestore.
  */
 async function guardarDatosPredio() {
+  const productor = document.getElementById('input-productor')?.value || '';
+  const establecimiento = document.getElementById('input-establecimiento')?.value || '';
   const objetivo = document.getElementById('sel-objetivo')?.value || '';
 
-  if (!objetivo) {
-    mostrarToast('Seleccioná un objetivo productivo antes de guardar.', 'error');
+  if (!productor || !establecimiento || !objetivo) {
+    mostrarToast('⚠️ Completá todos los campos obligatorios antes de guardar.', 'error');
     return;
   }
 
@@ -783,6 +796,8 @@ async function guardarDatosPredio() {
     await db.collection('predios').doc(usuarioActual.uid).set({
       operario_uid: usuarioActual.uid,
       operario_email: usuarioActual.email,
+      productor: sanitizarTexto(productor),
+      establecimiento: sanitizarTexto(establecimiento),
       objetivo: sanitizarTexto(objetivo),
       fechaActualizacion: new Date().toISOString()
     }, { merge: true });
@@ -823,7 +838,7 @@ async function guardarAnimalLocal(nuevoAnimal) {
     return false;
   }
 
-  let { caravana, nombre, sexo, raza, categoria, fecha_nac, peso_nac, madre, padre, castrado, foto } = nuevoAnimal;
+  let { caravana, nombre, sexo, raza, categoria, fecha_nac, peso_nac, madre, padre, castrado, foto, peso_destete } = nuevoAnimal;
 
   if (!caravana || caravana.trim() === '') {
     mostrarToast('⚠️ El número de caravana es obligatorio.', 'error');
@@ -837,8 +852,8 @@ async function guardarAnimalLocal(nuevoAnimal) {
   }
 
   if (!raza) {
-    mostrarToast('⚠️ Seleccioná una raza.', 'error');
-    document.getElementById('sel-raza')?.focus();
+    mostrarToast('⚠️ Seleccioná o escribí una raza.', 'error');
+    document.getElementById('input-raza')?.focus();
     return false;
   }
 
@@ -874,6 +889,7 @@ async function guardarAnimalLocal(nuevoAnimal) {
     nombre    = nombre?.trim()  ? sanitizarTexto(nombre)              : null;
     fecha_nac = fecha_nac       ? fecha_nac                           : null;
     peso_nac  = peso_nac        ? parseFloat(peso_nac)                : null;
+    peso_destete = peso_destete ? parseFloat(peso_destete)            : null;
     madre     = madre?.trim()   ? sanitizarTexto(madre.toUpperCase()) : null;
     padre     = padre?.trim()   ? sanitizarTexto(padre.toUpperCase()) : null;
     // La foto viene como cadena Base64 del procesador de canvas.
@@ -890,6 +906,7 @@ async function guardarAnimalLocal(nuevoAnimal) {
       categoria:        sanitizarTexto(categoria),
       fecha_nacimiento: fecha_nac,
       peso_nacimiento:  peso_nac,
+      peso_destete:     peso_destete,
       caravana_madre:   madre,
       caravana_padre:   padre,
       castrado:         Boolean(castrado),
@@ -901,10 +918,18 @@ async function guardarAnimalLocal(nuevoAnimal) {
     };
 
     // Guardar el documento en Firestore (ID automático con .add())
-    await db.collection('animales').add(animalSanitizado);
+    const docRef = await db.collection('animales').add(animalSanitizado);
 
     console.log(`[Inventario] ✅ Animal guardado en Firestore: ${animalSanitizado.caravana_id}`);
     mostrarToast(`✅ Caravana ${animalSanitizado.caravana_id} registrada con éxito.`, 'exito');
+
+    // Actualizar la caché local para refresco instantáneo y recalcular contadores
+    const nuevoAnimalCacheado = { id: docRef.id, ...animalSanitizado };
+    if (!animalesCache.some(a => a.caravana_id === nuevoAnimalCacheado.caravana_id)) {
+      animalesCache.push(nuevoAnimalCacheado);
+      actualizarContadores();
+    }
+
     return true;
 
   } catch (error) {
@@ -956,6 +981,7 @@ function renderizarInventario(inventario) {
     const iconoSexo     = animal.sexo === 'Macho' ? '♂️' : '♀️';
     const iconoFoto     = animal.foto ? ' 📷' : '';
     const textoCastrado = animal.castrado ? ' (Castrado)' : '';
+    const textoPesoDestete = animal.peso_destete ? `<br><strong>Peso Destete:</strong> ${animal.peso_destete} Kg` : '';
 
     let badgeRetiro = '';
     if (animal.fecha_limite_carencia) {
@@ -976,7 +1002,7 @@ function renderizarInventario(inventario) {
           ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
           <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCastrado}<br>
           <strong>Raza:</strong> ${animal.raza}<br>
-          <strong>Categoría:</strong> ${animal.categoria}<br>
+          <strong>Categoría:</strong> ${animal.categoria}${textoPesoDestete}<br>
         </div>
         ${badgeRetiro}
         <p class="animal-fecha">Alta: ${formatearFecha(animal.fechaAlta)}</p>
@@ -1014,18 +1040,23 @@ function listarAnimalesLocales() {
           if (!snapshot || snapshot.empty) {
             // Estado completamente normal: base de datos vacía o sin animales para este usuario
             console.log('[Inventario] ℹ️ Sin animales registrados para este operario.');
+            animalesCache = [];
             renderizarInventario([]);
+            actualizarContadores();
             return;
           }
+          
+          // Llenar animalesCache con datos reales
+          animalesCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
           // Mapear documentos y ordenar por fechaAlta descendente en el cliente
-          const inventario = snapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() }))
-            .sort((a, b) => {
+          const inventario = [...animalesCache].sort((a, b) => {
               const fa = a.fechaAlta ? new Date(a.fechaAlta) : new Date(0);
               const fb = b.fechaAlta ? new Date(b.fechaAlta) : new Date(0);
               return fb - fa;
             });
           renderizarInventario(inventario);
+          actualizarContadores();
           console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
         } catch (innerErr) {
           console.error('[Inventario] ❌ Error procesando snapshot de animales:', innerErr);
@@ -1034,7 +1065,9 @@ function listarAnimalesLocales() {
       (error) => {
         // Error real (permisos, red) — solo en consola, nunca interrumpe al usuario
         console.error('[Inventario] ❌ Error Firestore en animales:', error);
+        animalesCache = [];
         renderizarInventario([]);
+        actualizarContadores();
       }
     );
   } catch (err) {
@@ -1120,17 +1153,27 @@ function inicializarFormularioAlta() {
       }
     }
 
+    let castradoSeleccionado = false;
+    const radiosCastrado = document.getElementsByName('castrado');
+    for (const r of radiosCastrado) {
+      if (r.checked) {
+        castradoSeleccionado = (r.value === 'si');
+        break;
+      }
+    }
+
     const datosFormulario = {
       caravana:      document.getElementById('input-caravana')?.value   || '',
       nombre:        document.getElementById('input-nombre')?.value     || '',
       sexo:          sexoSeleccionado,
-      raza:          document.getElementById('sel-raza')?.value         || '',
+      raza:          document.getElementById('input-raza')?.value       || '',
       categoria:     document.getElementById('sel-categoria')?.value    || '',
       fecha_nac:     document.getElementById('input-fecha-nac')?.value  || '',
       peso_nac:      document.getElementById('input-peso-nac')?.value   || '',
+      peso_destete:  document.getElementById('input-peso-destete')?.value || '',
       madre:         document.getElementById('input-madre')?.value      || '',
       padre:         document.getElementById('input-padre')?.value      || '',
-      castrado:      document.getElementById('checkbox-castrado')?.checked || false,
+      castrado:      castradoSeleccionado,
       foto:          fotoBase64Temporal
     };
 
@@ -1148,13 +1191,13 @@ function inicializarFormularioAlta() {
  * después de un guardado exitoso.
  */
 function limpiarFormularioAlta() {
-  const camposInput = ['input-caravana', 'input-nombre', 'input-fecha-nac', 'input-peso-nac', 'input-madre', 'input-padre'];
+  const camposInput = ['input-caravana', 'input-nombre', 'input-fecha-nac', 'input-peso-nac', 'input-peso-destete', 'input-madre', 'input-padre', 'input-raza'];
   camposInput.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
 
-  const camposSelect = ['sel-raza', 'sel-categoria'];
+  const camposSelect = ['sel-categoria'];
   camposSelect.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -1163,8 +1206,10 @@ function limpiarFormularioAlta() {
   const radiosSexo = document.getElementsByName('sexo');
   radiosSexo.forEach(r => r.checked = false);
 
-  const checkboxCastrado = document.getElementById('checkbox-castrado');
-  if (checkboxCastrado) checkboxCastrado.checked = false;
+  const radioCastradoNo = document.getElementById('castrado-no');
+  if (radioCastradoNo) radioCastradoNo.checked = true;
+  const radioCastradoSi = document.getElementById('castrado-si');
+  if (radioCastradoSi) radioCastradoSi.checked = false;
 
   const inputFoto = document.getElementById('foto-animal');
   if (inputFoto) inputFoto.value = '';
@@ -1188,6 +1233,9 @@ function inicializarVistaInicio() {
 
   document.getElementById('btn-guardar-predio')
     ?.addEventListener('click', guardarDatosPredio);
+
+  document.getElementById('btn-cerrar-sesion')
+    ?.addEventListener('click', cerrarSesion);
 
   // Configurar el botón de instalación PWA
   const btnInstalar = document.getElementById('btn-instalar-pwa');
@@ -1979,63 +2027,116 @@ window.completarTareaManejo = async function(idTarea) {
  * Actualiza el panel de inicio con las tareas pendientes urgentes.
  */
 window.actualizarAlertasInicio = function(agendaRecibida) {
-  const contenedor = document.getElementById('contenedor-alertas-urgentes');
-  if (!contenedor) return;
+  const contenedorHoy = document.getElementById('contenedor-tareas-hoy');
+  const contenedorOtras = document.getElementById('contenedor-otras-tareas');
+  if (!contenedorHoy || !contenedorOtras) return;
 
   try {
-    // Si no recibimos agenda, la inicializamos vacía
     const agenda = Array.isArray(agendaRecibida) ? agendaRecibida : [];
     const pendientes = agenda.filter(t => !t.completada);
     
-    if (pendientes.length === 0) {
-      contenedor.innerHTML = '';
-      return;
-    }
+    // Resetear contenidos
+    contenedorHoy.innerHTML = '';
+    contenedorOtras.innerHTML = '';
 
     const hoy = new Date();
     hoy.setHours(0,0,0,0);
-    const dentroDe7Dias = new Date(hoy);
-    dentroDe7Dias.setDate(hoy.getDate() + 7);
 
-    const alertasHtml = pendientes.map(t => {
+    const tareasHoy = [];
+    const tareasOtras = [];
+
+    pendientes.forEach(t => {
       const fechaTarea = new Date(t.fechaProgramada + 'T00:00:00');
-      let clase = '';
-      let textoEstado = '';
+      fechaTarea.setHours(0,0,0,0);
       
-      if (fechaTarea < hoy) {
-        clase = 'vencida';
-        textoEstado = '⚠️ Vencida';
-      } else if (fechaTarea.getTime() === hoy.getTime()) {
-        clase = 'urgente-hoy';
-        textoEstado = '🟢 Hoy';
-      } else if (fechaTarea > hoy && fechaTarea <= dentroDe7Dias) {
-        clase = 'proxima';
-        textoEstado = '🟡 Próximamente';
+      if (fechaTarea.getTime() === hoy.getTime()) {
+        tareasHoy.push(t);
       } else {
-        return null; // No mostrar si falta más de 7 días
+        tareasOtras.push(t);
       }
+    });
 
-      const fechaFormateada = fechaTarea.toLocaleDateString('es-AR', {
-        day: '2-digit', month: 'short'
-      });
+    // Render Tareas de Hoy
+    if (tareasHoy.length === 0) {
+      contenedorHoy.innerHTML = `
+        <div style="font-size: 0.9rem; color: #555; font-style: italic;">
+          Sin tareas programadas para hoy.
+        </div>`;
+    } else {
+      contenedorHoy.innerHTML = tareasHoy.map(t => {
+        return `
+          <div class="tarea-item-inicio">
+            <div class="tarea-info-inicio">
+              <span class="tarea-nombre-inicio">📌 ${t.tarea}</span>
+              <div class="tarea-fecha-inicio">Ámbito: ${t.ambito}</div>
+            </div>
+            <button type="button" class="btn-marcar-hecho" onclick="completarTareaManejo('${t.id}')">✔️</button>
+          </div>`;
+      }).join('');
+    }
 
-      return `
-        <div class="alerta-urgente ${clase}">
-          <div class="alerta-detalle">
-            <p class="alerta-titulo">${t.tarea}</p>
-            <p class="alerta-fecha">${textoEstado} - <strong>${fechaFormateada}</strong></p>
-          </div>
-          <button type="button" class="btn-marcar-hecho" onclick="completarTareaManejo('${t.id}')">✔️</button>
-        </div>
-      `;
-    }).filter(html => html !== null).join('');
-
-    contenedor.innerHTML = alertasHtml;
+    // Render Otras Tareas
+    if (tareasOtras.length === 0) {
+      contenedorOtras.innerHTML = `
+        <div style="font-size: 0.9rem; color: #555; font-style: italic;">
+          Sin próximas tareas.
+        </div>`;
+    } else {
+      // Ordenar por fecha programada (las más próximas primero)
+      tareasOtras.sort((a, b) => new Date(a.fechaProgramada) - new Date(b.fechaProgramada));
+      
+      contenedorOtras.innerHTML = tareasOtras.map(t => {
+        const fechaTarea = new Date(t.fechaProgramada + 'T00:00:00');
+        const esVencida = fechaTarea < hoy;
+        const fechaFmt = fechaTarea.toLocaleDateString('es-AR', {
+          day: '2-digit', month: 'short'
+        });
+        const badgeVencida = esVencida ? `<span style="color: #c0392b; font-weight: 900;">[VENCIDA]</span> ` : '';
+        return `
+          <div class="tarea-item-inicio">
+            <div class="tarea-info-inicio">
+              <span class="tarea-nombre-inicio">${badgeVencida}📅 ${t.tarea}</span>
+              <div class="tarea-fecha-inicio">Fecha: <strong>${fechaFmt}</strong> | Ámbito: ${t.ambito}</div>
+            </div>
+            <button type="button" class="btn-marcar-hecho" onclick="completarTareaManejo('${t.id}')">✔️</button>
+          </div>`;
+      }).join('');
+    }
 
   } catch (error) {
     console.error('[Agenda] ❌ Error al actualizar alertas:', error);
   }
 };
+
+/**
+ * Calcula en tiempo real los totales del inventario local (sexo, castrados, categorías)
+ * y los plasma en el Tablero de Control de Inicio.
+ */
+function actualizarContadores() {
+  const total = animalesCache.length;
+  const hembras = animalesCache.filter(a => a.sexo === 'Hembra').length;
+  const machos = animalesCache.filter(a => a.sexo === 'Macho').length;
+  const castrados = animalesCache.filter(a => a.castrado).length;
+
+  const ovejas = animalesCache.filter(a => a.sexo === 'Hembra' && a.categoria && a.categoria.includes('Oveja Adulta')).length;
+  const carneros = animalesCache.filter(a => a.sexo === 'Macho' && a.categoria && a.categoria.includes('Oveja Adulta / Carnero')).length;
+  const borregos = animalesCache.filter(a => a.categoria && a.categoria.includes('Borrego')).length;
+  const corderos = animalesCache.filter(a => a.categoria && a.categoria.includes('Cordero')).length;
+
+  const setTexto = (id, valor) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = valor;
+  };
+
+  setTexto('totalAnimales', total);
+  setTexto('totalHembras', hembras);
+  setTexto('totalMachos', machos);
+  setTexto('totalCastrados', castrados);
+  setTexto('totalOvejas', ovejas);
+  setTexto('totalCarneros', carneros);
+  setTexto('totalBorregos', borregos);
+  setTexto('totalCorderos', corderos);
+}
 
 
 /* ============================================================
@@ -2076,6 +2177,9 @@ function inicializarAppUnaVez() {
 
   // 5. Inicializar el módulo de Tareas de Campo
   inicializarVistaTarea();
+
+  // 6. Cargar contadores iniciales vacíos
+  actualizarContadores();
 
   appInicializada = true;
   console.log('✅ Estructura base inicializada correctamente.');
