@@ -1435,6 +1435,312 @@
       background-color: rgba(46,204,113,0.03);
       box-shadow: 0 4px 15px rgba(46,204,113,0.15);
     }
+
+    /* ============================================================
+       MÓDULO INVENTARIO — Botones de acción (Ojo y Basura)
+       Posicionados en el extremo derecho de cada tarjeta de animal.
+    ============================================================ */
+    .animal-acciones {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    /* Botón base de acción */
+    .btn-accion {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 9px 14px;
+      border: 2px solid;
+      border-radius: 8px;
+      font-family: var(--fuente-principal);
+      font-size: 0.82rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all var(--transicion);
+      letter-spacing: 0.3px;
+    }
+    .btn-accion:active { transform: scale(0.95); }
+    .btn-accion svg { flex-shrink: 0; }
+
+    /* Botón Ver (ojo) — azul */
+    .btn-ver-animal {
+      background-color: #eaf4ff;
+      border-color: #3498db;
+      color: #2980b9;
+    }
+    .btn-ver-animal:hover {
+      background-color: #3498db;
+      color: #ffffff;
+    }
+
+    /* Botón Eliminar (basura) — rojo */
+    .btn-eliminar-animal {
+      background-color: #fff0f0;
+      border-color: #e74c3c;
+      color: #c0392b;
+    }
+    .btn-eliminar-animal:hover {
+      background-color: #e74c3c;
+      color: #ffffff;
+    }
+
+    /* ============================================================
+       MODAL DE DETALLE COMPLETO DEL ANIMAL
+       Flotante centrado, semi-transparente al fondo.
+    ============================================================ */
+
+    /* Fondo oscuro del modal (overlay) */
+    #modal-animal-overlay {
+      display: none; /* Oculto por defecto */
+      position: fixed;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.55);
+      z-index: 5000;
+      /* Centrar el panel del modal */
+      align-items: flex-start;
+      justify-content: center;
+      padding: 16px 12px;
+      overflow-y: auto;
+    }
+    /* Al abrirse, se cambia a flex */
+    #modal-animal-overlay.abierto {
+      display: flex;
+    }
+
+    /* Panel blanco del modal */
+    #modal-animal-panel {
+      background-color: #ffffff;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 460px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+      overflow: hidden;
+      animation: modalEntrada 0.25s ease;
+    }
+    @keyframes modalEntrada {
+      from { opacity: 0; transform: translateY(-20px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0)  scale(1); }
+    }
+
+    /* Cabecera del modal con color de marca */
+    .modal-cabecera {
+      background: linear-gradient(135deg, #27ae60, #2ecc71);
+      padding: 20px 20px 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .modal-cabecera-info {
+      flex: 1;
+    }
+    .modal-caravana-badge {
+      font-size: 0.72rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: rgba(255,255,255,0.8);
+      margin-bottom: 4px;
+    }
+    .modal-caravana-numero {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+    .modal-nombre-animal {
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.9);
+      margin-top: 4px;
+      font-style: italic;
+    }
+    /* Botón X de cerrar dentro de la cabecera */
+    .modal-btn-cerrar {
+      background-color: rgba(255,255,255,0.2);
+      border: 2px solid rgba(255,255,255,0.5);
+      color: #ffffff;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1.2rem;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background-color var(--transicion);
+    }
+    .modal-btn-cerrar:hover { background-color: rgba(255,255,255,0.35); }
+
+    /* Cuerpo del modal con scroll interno */
+    .modal-cuerpo {
+      padding: 0;
+      max-height: calc(100dvh - 120px);
+      overflow-y: auto;
+    }
+
+    /* Sección de datos dentro del modal */
+    .modal-seccion {
+      padding: 16px 20px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .modal-seccion:last-child { border-bottom: none; }
+
+    .modal-seccion-titulo {
+      font-size: 0.75rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #27ae60;
+      margin-bottom: 12px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #e8f5e9;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Grilla de datos (etiqueta + valor) */
+    .modal-datos-grilla {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .modal-dato {
+      background-color: #f8fffe;
+      border: 1px solid #e0f2f1;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .modal-dato.ancho-completo {
+      grid-column: 1 / -1; /* Ocupa todo el ancho */
+    }
+    .modal-dato-etiqueta {
+      font-size: 0.7rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #888;
+      margin-bottom: 3px;
+    }
+    .modal-dato-valor {
+      font-size: 0.95rem;
+      font-weight: bold;
+      color: #1a1a1a;
+      word-break: break-word;
+    }
+    /* Destacar la edad calculada */
+    .modal-dato-valor.edad-calculada {
+      color: #2ecc71;
+      font-size: 1.05rem;
+    }
+    /* Badge de castración */
+    .badge-castrado-si {
+      display: inline-block;
+      background-color: #e8f5e9;
+      color: #27ae60;
+      border: 1px solid #27ae60;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.85rem;
+    }
+    .badge-castrado-no {
+      display: inline-block;
+      background-color: #fbe9e7;
+      color: #e74c3c;
+      border: 1px solid #e74c3c;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.85rem;
+    }
+
+    /* ============================================================
+       HISTORIALES CRUZADOS DENTRO DEL MODAL
+       Tres bloques independientes con tabla cronológica.
+    ============================================================ */
+
+    /* Pestañas para navegar entre historiales */
+    .modal-tabs {
+      display: flex;
+      border-bottom: 2px solid #e0e0e0;
+      background-color: #f9f9f9;
+    }
+    .modal-tab {
+      flex: 1;
+      padding: 11px 6px;
+      font-size: 0.72rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: #888888;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: all var(--transicion);
+      font-family: var(--fuente-principal);
+    }
+    .modal-tab.activo {
+      color: #2ecc71;
+      border-bottom-color: #2ecc71;
+      background-color: #ffffff;
+    }
+
+    /* Panel de cada historial (se muestra/oculta) */
+    .modal-historial-panel {
+      display: none;
+      padding: 16px 20px;
+    }
+    .modal-historial-panel.activo { display: block; }
+
+    /* Spinner de carga dentro del modal */
+    .modal-cargando {
+      text-align: center;
+      padding: 24px;
+      color: #888;
+      font-size: 0.9rem;
+      font-style: italic;
+    }
+
+    /* Ítem individual de historial */
+    .modal-historial-item {
+      background-color: #f8fffe;
+      border: 1px solid #e0f2f1;
+      border-left: 5px solid #2ecc71;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      font-size: 0.88rem;
+      line-height: 1.6;
+      color: #1a1a1a;
+    }
+    .modal-historial-item.sanidad {
+      border-left-color: #3498db;
+    }
+    .modal-historial-item.tarea {
+      border-left-color: #f39c12;
+    }
+    .modal-historial-item .item-fecha {
+      font-size: 0.72rem;
+      color: #888;
+      margin-top: 6px;
+      font-weight: bold;
+    }
+    .modal-historial-vacio {
+      text-align: center;
+      padding: 24px;
+      color: #aaa;
+      font-size: 0.88rem;
+    }
   </style>
 </head>
 
@@ -1881,6 +2187,7 @@
       </header>
 
       <p class="seccion-titulo">Inventario de Animales</p>
+      <p class="seccion-subtitulo">Tocá el 👁️ para ver el detalle completo o el 🗑️ para eliminar un animal.</p>
 
       <div id="inventario-contador" class="inventario-contador" aria-live="polite" aria-label="Cantidad de animales registrados">
         <!-- Actualizado por JavaScript -->
@@ -1888,7 +2195,7 @@
 
       <!-- Aquí se renderizan las tarjetas de los animales por JS -->
       <div id="lista-animales" role="list" aria-label="Listado de animales registrados">
-        <!-- Contenido dinámico generado por listarAnimalesLocales() -->
+        <!-- Contenido dinámico generado por renderizarInventario() -->
       </div>
 
     </section><!-- /vista-inventario -->
@@ -2306,6 +2613,139 @@
 
   <!-- Notificación Toast (invisible al inicio, activada por JS) -->
   <div id="toast" role="alert" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- ============================================================
+       MODAL DE DETALLE COMPLETO DEL ANIMAL
+       Este overlay cubre toda la pantalla cuando está abierto.
+       JavaScript inyecta los datos del animal seleccionado.
+  ============================================================ -->
+  <div
+    id="modal-animal-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modal-caravana-titulo"
+    aria-describedby="modal-descripcion"
+  >
+    <div id="modal-animal-panel">
+
+      <!-- CABECERA DEL MODAL: Número de caravana y botón de cierre -->
+      <header class="modal-cabecera">
+        <div class="modal-cabecera-info">
+          <p class="modal-caravana-badge">Nº de Caravana</p>
+          <!-- ID para aria-labelledby: anuncia el número al lector de pantalla -->
+          <p class="modal-caravana-numero" id="modal-caravana-titulo">—</p>
+          <p class="modal-nombre-animal" id="modal-nombre-titulo"></p>
+        </div>
+        <button
+          type="button"
+          class="modal-btn-cerrar"
+          id="modal-btn-cerrar"
+          aria-label="Cerrar detalle del animal"
+        >✕</button>
+      </header>
+
+      <!-- CUERPO DEL MODAL con scroll -->
+      <div class="modal-cuerpo" id="modal-descripcion">
+
+        <!-- SECCIÓN 1: Datos base del animal -->
+        <div class="modal-seccion">
+          <p class="modal-seccion-titulo">🐑 Datos del Animal</p>
+          <div class="modal-datos-grilla" id="modal-datos-base">
+            <!-- Inyectado por JS: raza, categoría, sexo, castrado, etc. -->
+          </div>
+        </div>
+
+        <!-- SECCIÓN 2: Edad calculada dinámicamente -->
+        <div class="modal-seccion">
+          <p class="modal-seccion-titulo">🎂 Edad y Nacimiento</p>
+          <div class="modal-datos-grilla" id="modal-datos-nacimiento">
+            <!-- Inyectado por JS: fecha nac., peso nac., peso destete, edad automática -->
+          </div>
+        </div>
+
+        <!-- SECCIÓN 3: Trazabilidad genealógica -->
+        <div class="modal-seccion">
+          <p class="modal-seccion-titulo">🧬 Filiación / Genealogía</p>
+          <div class="modal-datos-grilla" id="modal-datos-filiacion">
+            <!-- Inyectado por JS: caravana padre, caravana madre -->
+          </div>
+        </div>
+
+        <!-- SECCIÓN 4: Historiales cruzados con pestañas -->
+        <div class="modal-seccion" style="padding: 0;">
+
+          <!-- Barra de pestañas -->
+          <div class="modal-tabs" role="tablist" aria-label="Historiales del animal">
+            <button
+              type="button"
+              class="modal-tab activo"
+              id="tab-observaciones"
+              data-panel="panel-observaciones"
+              role="tab"
+              aria-selected="true"
+            >📝 Notas</button>
+            <button
+              type="button"
+              class="modal-tab"
+              id="tab-sanidad"
+              data-panel="panel-sanidad"
+              role="tab"
+              aria-selected="false"
+            >💉 Sanidad</button>
+            <button
+              type="button"
+              class="modal-tab"
+              id="tab-tareas"
+              data-panel="panel-tareas"
+              role="tab"
+              aria-selected="false"
+            >📋 Tareas</button>
+          </div>
+
+          <!-- Panel: Historial de Observaciones / Notas Generales -->
+          <div
+            id="panel-observaciones"
+            class="modal-historial-panel activo"
+            role="tabpanel"
+            aria-labelledby="tab-observaciones"
+          >
+            <p class="modal-cargando" id="cargando-observaciones">Cargando notas...</p>
+            <div id="lista-observaciones">
+              <!-- Inyectado por JS -->
+            </div>
+          </div>
+
+          <!-- Panel: Historial Sanitario -->
+          <div
+            id="panel-sanidad"
+            class="modal-historial-panel"
+            role="tabpanel"
+            aria-labelledby="tab-sanidad"
+          >
+            <p class="modal-cargando" id="cargando-sanidad">Cargando registros sanitarios...</p>
+            <div id="lista-sanidad-modal">
+              <!-- Inyectado por JS -->
+            </div>
+          </div>
+
+          <!-- Panel: Historial de Tareas de Manejo -->
+          <div
+            id="panel-tareas"
+            class="modal-historial-panel"
+            role="tabpanel"
+            aria-labelledby="tab-tareas"
+          >
+            <p class="modal-cargando" id="cargando-tareas">Cargando tareas...</p>
+            <div id="lista-tareas-modal">
+              <!-- Inyectado por JS -->
+            </div>
+          </div>
+
+        </div><!-- /sección historiales -->
+
+      </div><!-- /modal-cuerpo -->
+    </div><!-- /modal-animal-panel -->
+  </div><!-- /modal-animal-overlay -->
 
   <!-- Carga el cerebro de la aplicación (después de los SDKs de Firebase) -->
   <script src="app.js" defer></script>

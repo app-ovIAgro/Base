@@ -956,6 +956,10 @@ function suscribirAnimalesEnTiempoReal() {
  * Es llamada automáticamente por el listener onSnapshot.
  * @param {Array} inventario - Array de objetos animal desde Firestore.
  */
+/**
+ * Renderiza las tarjetas del inventario con botones de Ojo (ver) y Basura (eliminar).
+ * @param {Array} inventario - Array de objetos animal desde Firestore.
+ */
 function renderizarInventario(inventario) {
   const contenedor = document.getElementById('lista-animales');
   const contadorEl = document.getElementById('inventario-contador');
@@ -977,39 +981,437 @@ function renderizarInventario(inventario) {
     return;
   }
 
+  // Icono SVG de ojo (ver detalles)
+  const icoOjo = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  // Icono SVG de cesto de basura (eliminar)
+  const icoBasura = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+
   const htmlTarjetas = inventario.map((animal) => {
-    const iconoSexo     = animal.sexo === 'Macho' ? '♂️' : '♀️';
-    const iconoFoto     = animal.foto ? ' 📷' : '';
-    const textoCastrado = animal.castrado ? ' (Castrado)' : '';
-    const textoPesoDestete = animal.peso_destete ? `<br><strong>Peso Destete:</strong> ${animal.peso_destete} Kg` : '';
+    const iconoSexo    = animal.sexo === 'Macho' ? '♂️' : '♀️';
+    const iconoFoto    = animal.foto ? ' 📷' : '';
+    const textoCast   = animal.castrado ? ' (Castrado)' : '';
+    const textoDest   = animal.peso_destete ? `<br><strong>Peso Destete:</strong> ${animal.peso_destete} Kg` : '';
 
     let badgeRetiro = '';
     if (animal.fecha_limite_carencia) {
-      const ahora       = new Date();
-      const fechaRetiro = new Date(animal.fecha_limite_carencia);
-      if (ahora < fechaRetiro) {
-        const fechaFmt = fechaRetiro.toLocaleDateString('es-AR', {
-          day: '2-digit', month: '2-digit', year: 'numeric'
-        });
-        badgeRetiro = `<div class="badge-retiro" role="alert">⚠️ RETIRO ACTIVO — No vender hasta ${fechaFmt}</div>`;
+      const ahora = new Date();
+      const fRet  = new Date(animal.fecha_limite_carencia);
+      if (ahora < fRet) {
+        const fFmt = fRet.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+        badgeRetiro = `<div class="badge-retiro" role="alert">⚠️ RETIRO ACTIVO — No vender hasta ${fFmt}</div>`;
       }
     }
+
+    // Escapamos el ID del documento de Firestore para usarlo como atributo data-
+    const docId = animal.id || '';
 
     return `
       <article class="animal-tarjeta" role="listitem" aria-label="Animal caravana ${animal.caravana_id}">
         <p class="animal-caravana">${animal.caravana_id}${iconoFoto}</p>
         <div class="animal-detalles">
           ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
-          <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCastrado}<br>
+          <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCast}<br>
           <strong>Raza:</strong> ${animal.raza}<br>
-          <strong>Categoría:</strong> ${animal.categoria}${textoPesoDestete}<br>
+          <strong>Categoría:</strong> ${animal.categoria}${textoDest}
         </div>
         ${badgeRetiro}
         <p class="animal-fecha">Alta: ${formatearFecha(animal.fechaAlta)}</p>
+        <!-- Botones de acción: Ver (ojo) y Eliminar (basura) -->
+        <div class="animal-acciones">
+          <button
+            type="button"
+            class="btn-accion btn-ver-animal"
+            data-id="${docId}"
+            aria-label="Ver detalles de ${animal.caravana_id}"
+            onclick="abrirModalAnimal('${docId}')"
+          >${icoOjo} Ver</button>
+          <button
+            type="button"
+            class="btn-accion btn-eliminar-animal"
+            data-id="${docId}"
+            aria-label="Eliminar ${animal.caravana_id}"
+            onclick="eliminarAnimal('${docId}', '${animal.caravana_id}')"
+          >${icoBasura} Eliminar</button>
+        </div>
       </article>`;
   }).join('');
 
   contenedor.innerHTML = htmlTarjetas;
+}
+
+/* ============================================================
+   MÓDULO: ELIMINACIÓN DE ANIMAL CON CONFIRMACIÓN
+   Pide confirmación nativa antes de borrar de Firestore.
+============================================================ */
+
+/**
+ * Elimina un documento de animal de Firestore tras confirmación del operario.
+ * @param {string} docId     - ID del documento en Firestore.
+ * @param {string} caravana  - Número de caravana legible (para el mensaje).
+ */
+window.eliminarAnimal = async function(docId, caravana) {
+  if (!docId || !usuarioActual) return;
+
+  // Confirmación nativa del navegador — sencilla y efectiva en campo
+  const confirmado = confirm(
+    `¿Estás seguro de que deseas eliminar este animal permanentemente?\n\nCaravana: ${caravana}\n\nEsta acción NO se puede deshacer.`
+  );
+  if (!confirmado) return;
+
+  try {
+    // Eliminar el documento de la colección 'animales' en Firestore
+    await db.collection('animales').doc(docId).delete();
+    mostrarToast(`✅ Animal ${caravana} eliminado correctamente.`, 'exito', 4000);
+    console.log(`[Inventario] ✅ Animal eliminado: ${caravana} (ID: ${docId})`);
+    // onSnapshot detectará el cambio y re-renderizará la lista automáticamente
+  } catch (error) {
+    console.error('[Inventario] ❌ Error al eliminar animal en Firestore:', error);
+    mostrarToast('Error al eliminar. Verificá tu conexión.', 'error');
+  }
+};
+
+/* ============================================================
+   MÓDULO: MODAL DE DETALLE COMPLETO DEL ANIMAL
+   Abre un panel flotante con toda la información del animal
+   y sus historiales cruzados consultados en Firestore.
+============================================================ */
+
+/**
+ * Calcula la edad exacta de un animal a partir de su fecha de nacimiento.
+ * Compara con la fecha actual del sistema.
+ * @param {string} fechaNacStr - Fecha de nacimiento en formato 'YYYY-MM-DD' o ISO.
+ * @returns {string} Texto legible como "4 meses", "2 años y 1 mes", "Sin fecha".
+ */
+function calcularEdadAnimal(fechaNacStr) {
+  if (!fechaNacStr) return 'Sin fecha de nacimiento';
+
+  try {
+    // Construir fecha local evitando el offset de timezone (input type=date da 'YYYY-MM-DD')
+    const partes = fechaNacStr.substring(0, 10).split('-');
+    const nacimiento = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
+    const hoy = new Date();
+
+    // Diferencia en meses totales
+    let anios = hoy.getFullYear() - nacimiento.getFullYear();
+    let meses  = hoy.getMonth()    - nacimiento.getMonth();
+
+    // Ajustar si el día actual es menor al día de nacimiento
+    if (hoy.getDate() < nacimiento.getDate()) meses--;
+
+    // Ajustar años si los meses son negativos
+    if (meses < 0) { anios--; meses += 12; }
+
+    // Formatear resultado legible en español
+    if (anios === 0 && meses === 0)  return 'Menos de 1 mes';
+    if (anios === 0)                 return `${meses} mes${meses !== 1 ? 'es' : ''}`;
+    if (meses === 0)                 return `${anios} año${anios !== 1 ? 's' : ''}`;
+    return `${anios} año${anios !== 1 ? 's' : ''} y ${meses} mes${meses !== 1 ? 'es' : ''}`;
+  } catch (e) {
+    console.warn('[Modal] Error al calcular edad:', e);
+    return 'Error de cálculo';
+  }
+}
+
+/**
+ * Genera el HTML de un dato individual para la grilla del modal.
+ * @param {string} etiqueta   - Nombre del campo.
+ * @param {string} valor      - Valor a mostrar.
+ * @param {boolean} ancho     - Si true, ocupa todo el ancho de la grilla.
+ * @param {string} claseValor - Clase CSS adicional para el valor.
+ * @returns {string} HTML del elemento .modal-dato.
+ */
+function construirDatoModal(etiqueta, valor, ancho = false, claseValor = '') {
+  const claseAncho = ancho ? ' ancho-completo' : '';
+  return `
+    <div class="modal-dato${claseAncho}">
+      <p class="modal-dato-etiqueta">${etiqueta}</p>
+      <p class="modal-dato-valor ${claseValor}">${valor || '<em style="color:#aaa">No registrado</em>'}</p>
+    </div>`;
+}
+
+/**
+ * Abre el modal de detalle con los datos del animal identificado por docId.
+ * Realiza tres consultas cruzadas en Firestore para llenar los historiales:
+ *   1. historial_sanitario (campo array dentro del doc del animal)
+ *   2. Colección 'observaciones' vinculada por caravana_id
+ *   3. Colección 'tareas' vinculada por ambito (caravana)
+ * @param {string} docId - ID del documento del animal en Firestore.
+ */
+window.abrirModalAnimal = async function(docId) {
+  if (!docId || !usuarioActual) return;
+
+  const overlay = document.getElementById('modal-animal-overlay');
+  if (!overlay) return;
+
+  // Abrir el overlay y bloquear el scroll del body
+  overlay.classList.add('abierto');
+  document.body.style.overflow = 'hidden';
+
+  // Mostrar spinners de carga en todos los paneles mientras se consulta Firestore
+  ['cargando-observaciones', 'cargando-sanidad', 'cargando-tareas'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'block';
+  });
+  ['lista-observaciones', 'lista-sanidad-modal', 'lista-tareas-modal'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+
+  try {
+    // ── Obtener el documento del animal desde Firestore ──
+    const docSnap = await db.collection('animales').doc(docId).get();
+    if (!docSnap.exists) {
+      mostrarToast('Animal no encontrado en la base de datos.', 'error');
+      cerrarModalAnimal();
+      return;
+    }
+
+    const a = docSnap.data(); // Objeto con todos los campos del animal
+    const caravana = a.caravana_id || '—';
+
+    // ── Llenar CABECERA del modal ──
+    const elCaravana = document.getElementById('modal-caravana-titulo');
+    const elNombre   = document.getElementById('modal-nombre-titulo');
+    if (elCaravana) elCaravana.textContent = caravana;
+    if (elNombre)   elNombre.textContent   = a.nombre || '';
+
+    // ── SECCIÓN 1: Datos base ──
+    const sexoTexto    = a.sexo || '—';
+    const castBadge    = a.castrado
+      ? '<span class="badge-castrado-si">Sí</span>'
+      : '<span class="badge-castrado-no">No</span>';
+
+    const sBase = document.getElementById('modal-datos-base');
+    if (sBase) {
+      sBase.innerHTML =
+        construirDatoModal('Raza', a.raza) +
+        construirDatoModal('Categoría', a.categoria, true) +
+        construirDatoModal('Sexo', sexoTexto) +
+        construirDatoModal('Castrado/a', castBadge);
+    }
+
+    // ── SECCIÓN 2: Nacimiento y edad calculada dinámicamente ──
+    const fechaNac = a.fecha_nacimiento || null;
+    const edadCalc = calcularEdadAnimal(fechaNac);
+    const fechaNacFmt = fechaNac
+      ? new Date(fechaNac + 'T00:00:00').toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })
+      : null;
+
+    const sNac = document.getElementById('modal-datos-nacimiento');
+    if (sNac) {
+      sNac.innerHTML =
+        construirDatoModal('Fecha de Nacimiento', fechaNacFmt) +
+        construirDatoModal('Edad Actual', edadCalc, false, 'edad-calculada') +
+        construirDatoModal('Peso al Nacer (Kg)', a.peso_nacimiento ? `${a.peso_nacimiento} Kg` : null) +
+        construirDatoModal('Peso al Destete (Kg)', a.peso_destete ? `${a.peso_destete} Kg` : null);
+    }
+
+    // ── SECCIÓN 3: Filiación genealógica ──
+    const sFil = document.getElementById('modal-datos-filiacion');
+    if (sFil) {
+      sFil.innerHTML =
+        construirDatoModal('Caravana del Padre', a.caravana_padre) +
+        construirDatoModal('Caravana de la Madre', a.caravana_madre);
+    }
+
+    // ── SECCIÓN 4: Cargar los tres historiales en paralelo ──
+    await cargarHistorialesModal(a, caravana);
+
+  } catch (error) {
+    console.error('[Modal] ❌ Error al abrir modal del animal:', error);
+    mostrarToast('Error al cargar los datos del animal.', 'error');
+    cerrarModalAnimal();
+  }
+};
+
+/**
+ * Carga y renderiza los tres historiales cruzados en el modal:
+ *   - Observaciones (colección 'observaciones' o campo en el doc)
+ *   - Sanidad       (array historial_sanitario dentro del doc del animal)
+ *   - Tareas        (colección 'tareas' filtrada por caravana en campo 'ambito')
+ * @param {Object} animal   - Datos del documento del animal.
+ * @param {string} caravana - Número de caravana para filtrar otras colecciones.
+ */
+async function cargarHistorialesModal(animal, caravana) {
+
+  // ── HISTORIAL 1: OBSERVACIONES ──
+  // Primero busca campo 'observaciones' array dentro del doc, luego colección propia.
+  try {
+    const elCarg = document.getElementById('cargando-observaciones');
+    const elList = document.getElementById('lista-observaciones');
+
+    // Intentar colección independiente 'observaciones' filtrada por caravana
+    const snapObs = await db.collection('observaciones')
+      .where('operario_uid', '==', usuarioActual.uid)
+      .where('caravana_id',  '==', caravana)
+      .get();
+
+    // Recolectar también observaciones que puedan estar en campo array del doc
+    let items = [];
+    if (!snapObs.empty) {
+      items = snapObs.docs
+        .map(d => d.data())
+        .sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+    }
+
+    if (elCarg) elCarg.style.display = 'none';
+    if (elList) {
+      elList.innerHTML = items.length === 0
+        ? '<p class="modal-historial-vacio">Sin observaciones registradas para este animal.</p>'
+        : items.map(obs => `
+            <div class="modal-historial-item">
+              <strong>${obs.titulo || 'Nota'}</strong>
+              ${obs.descripcion ? `<br>${obs.descripcion}` : ''}
+              <p class="item-fecha">📅 ${formatearFecha(obs.fecha)}</p>
+            </div>`).join('');
+    }
+  } catch (e) {
+    console.warn('[Modal] No se pudo cargar colección observaciones:', e.message);
+    const el = document.getElementById('lista-observaciones');
+    if (el) el.innerHTML = '<p class="modal-historial-vacio">No hay observaciones disponibles.</p>';
+    const elC = document.getElementById('cargando-observaciones');
+    if (elC) elC.style.display = 'none';
+  }
+
+  // ── HISTORIAL 2: SANIDAD ──
+  // Los registros sanitarios se guardan como array 'historial_sanitario' dentro del doc del animal.
+  try {
+    const elCarg = document.getElementById('cargando-sanidad');
+    const elList = document.getElementById('lista-sanidad-modal');
+
+    const histSan = Array.isArray(animal.historial_sanitario) ? animal.historial_sanitario : [];
+    // Ordenar cronológicamente del más reciente al más antiguo
+    const sanOrdenado = [...histSan].sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+
+    if (elCarg) elCarg.style.display = 'none';
+    if (elList) {
+      elList.innerHTML = sanOrdenado.length === 0
+        ? '<p class="modal-historial-vacio">Sin registros sanitarios para este animal.</p>'
+        : sanOrdenado.map(reg => {
+            const via  = reg.via_administracion ? ` | Vía: ${reg.via_administracion}` : '';
+            const fam  = reg.famacha            ? ` | Famacha: ${reg.famacha}` : '';
+            const obs  = reg.observaciones      ? `<br>📝 ${reg.observaciones}` : '';
+            const ret  = reg.fecha_limite_carencia
+              ? `<br>⚠️ Retiro hasta: <strong>${formatearFecha(reg.fecha_limite_carencia)}</strong>`
+              : '';
+            return `
+              <div class="modal-historial-item sanidad">
+                <strong>${reg.tipo_evento}</strong> — ${reg.producto} (${reg.dosis})${via}${fam}
+                ${obs}${ret}
+                <p class="item-fecha">📅 ${formatearFecha(reg.fecha)}</p>
+              </div>`;
+          }).join('');
+    }
+  } catch (e) {
+    console.error('[Modal] Error al renderizar historial sanitario:', e);
+    const el = document.getElementById('lista-sanidad-modal');
+    if (el) el.innerHTML = '<p class="modal-historial-vacio">Error al cargar registros sanitarios.</p>';
+    const elC = document.getElementById('cargando-sanidad');
+    if (elC) elC.style.display = 'none';
+  }
+
+  // ── HISTORIAL 3: TAREAS DE MANEJO ──
+  // Busca en colección 'tareas' aquellas cuyo campo 'ambito' contiene la caravana del animal.
+  try {
+    const elCarg = document.getElementById('cargando-tareas');
+    const elList = document.getElementById('lista-tareas-modal');
+
+    const snapTar = await db.collection('tareas')
+      .where('operario_uid', '==', usuarioActual.uid)
+      .where('ambito', '==', caravana)
+      .get();
+
+    // Si no hay tareas específicas por caravana, también buscar por nombre
+    let tareas = snapTar.docs.map(d => ({ id: d.id, ...d.data() }));
+    tareas.sort((a, b) => new Date(b.fechaProgramada || 0) - new Date(a.fechaProgramada || 0));
+
+    if (elCarg) elCarg.style.display = 'none';
+    if (elList) {
+      elList.innerHTML = tareas.length === 0
+        ? '<p class="modal-historial-vacio">Sin tareas de manejo vinculadas a este animal.</p>'
+        : tareas.map(t => {
+            const fechaFmt = t.fechaProgramada
+              ? new Date(t.fechaProgramada + 'T00:00:00').toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })
+              : '—';
+            const estado = t.completada
+              ? '<span style="color:#27ae60; font-weight:bold;">✔ Completada</span>'
+              : '<span style="color:#e67e22; font-weight:bold;">⏳ Pendiente</span>';
+            return `
+              <div class="modal-historial-item tarea">
+                <strong>${t.tarea}</strong> ${estado}
+                ${t.observaciones ? `<br>📝 ${t.observaciones}` : ''}
+                <p class="item-fecha">📅 Programada: ${fechaFmt}</p>
+              </div>`;
+          }).join('');
+    }
+  } catch (e) {
+    console.warn('[Modal] No se pudo cargar tareas para esta caravana:', e.message);
+    const el = document.getElementById('lista-tareas-modal');
+    if (el) el.innerHTML = '<p class="modal-historial-vacio">No hay tareas disponibles.</p>';
+    const elC = document.getElementById('cargando-tareas');
+    if (elC) elC.style.display = 'none';
+  }
+}
+
+/**
+ * Cierra el modal de detalle del animal y restaura el scroll del body.
+ */
+function cerrarModalAnimal() {
+  const overlay = document.getElementById('modal-animal-overlay');
+  if (overlay) overlay.classList.remove('abierto');
+  document.body.style.overflow = '';
+}
+
+/**
+ * Inicializa los eventos del modal:
+ *   - Botón X de cierre
+ *   - Clic fuera del panel (en el overlay) para cerrar
+ *   - Pestañas de historiales (Observaciones / Sanidad / Tareas)
+ */
+function inicializarModal() {
+  // ── Botón de cerrar (X) ──
+  const btnCerrar = document.getElementById('modal-btn-cerrar');
+  if (btnCerrar) {
+    btnCerrar.addEventListener('click', cerrarModalAnimal);
+  }
+
+  // ── Cerrar al hacer clic en el fondo oscuro (overlay) ──
+  const overlay = document.getElementById('modal-animal-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (e) => {
+      // Solo cerrar si se hizo clic directamente en el overlay, no en el panel
+      if (e.target === overlay) cerrarModalAnimal();
+    });
+  }
+
+  // ── Cerrar con la tecla Escape ──
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') cerrarModalAnimal();
+  });
+
+  // ── Pestañas de historiales cruzados ──
+  const tabs = document.querySelectorAll('.modal-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Desactivar todas las pestañas y paneles
+      tabs.forEach(t => {
+        t.classList.remove('activo');
+        t.setAttribute('aria-selected', 'false');
+      });
+      document.querySelectorAll('.modal-historial-panel').forEach(p => {
+        p.classList.remove('activo');
+      });
+
+      // Activar la pestaña clickeada y su panel correspondiente
+      tab.classList.add('activo');
+      tab.setAttribute('aria-selected', 'true');
+      const panelId = tab.dataset.panel;
+      const panel   = document.getElementById(panelId);
+      if (panel) panel.classList.add('activo');
+    });
+  });
+
+  console.log('[Modal] ✅ Modal de detalle de animal inicializado.');
 }
 
 /**
@@ -2178,7 +2580,11 @@ function inicializarAppUnaVez() {
   // 5. Inicializar el módulo de Tareas de Campo
   inicializarVistaTarea();
 
-  // 6. Cargar contadores iniciales vacíos
+  // 6. Inicializar el modal de detalle completo del animal (Ojo)
+  // Conecta el botón X, el overlay de cierre y las pestañas de historiales.
+  inicializarModal();
+
+  // 7. Cargar contadores iniciales vacíos
   actualizarContadores();
 
   appInicializada = true;
