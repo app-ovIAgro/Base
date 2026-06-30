@@ -949,6 +949,8 @@ async function guardarAnimalLocal(nuevoAnimal) {
  */
 function suscribirAnimalesEnTiempoReal() {
   listarAnimalesLocales();
+  // Repoblar selectores de caravana en Salud y Tareas con los animales actuales
+  cargarSelectoresAnimales();
 }
 
 /**
@@ -983,12 +985,13 @@ function renderizarInventario(inventario) {
 
   // Icono SVG de ojo (ver detalles)
   const icoOjo = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  // Icono SVG de lápiz (editar)
+  const icoLapiz = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
   // Icono SVG de cesto de basura (eliminar)
   const icoBasura = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
   const htmlTarjetas = inventario.map((animal) => {
     const iconoSexo    = animal.sexo === 'Macho' ? '♂️' : '♀️';
-    const iconoFoto    = animal.foto ? ' 📷' : '';
     const textoCast   = animal.castrado ? ' (Castrado)' : '';
     const textoDest   = animal.peso_destete ? `<br><strong>Peso Destete:</strong> ${animal.peso_destete} Kg` : '';
 
@@ -1005,18 +1008,27 @@ function renderizarInventario(inventario) {
     // Escapamos el ID del documento de Firestore para usarlo como atributo data-
     const docId = animal.id || '';
 
+    const fotoMiniatura = animal.foto
+      ? `<div class="mini-foto-animal" aria-label="Foto de ${animal.caravana_id}"><img src="${animal.foto}" alt="Miniatura"></div>`
+      : `<div class="mini-foto-animal vacio" aria-label="Sin foto"><span>🐑</span></div>`;
+
     return `
       <article class="animal-tarjeta" role="listitem" aria-label="Animal caravana ${animal.caravana_id}">
-        <p class="animal-caravana">${animal.caravana_id}${iconoFoto}</p>
-        <div class="animal-detalles">
-          ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
-          <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCast}<br>
-          <strong>Raza:</strong> ${animal.raza}<br>
-          <strong>Categoría:</strong> ${animal.categoria}${textoDest}
+        <div class="animal-tarjeta-cuerpo">
+          ${fotoMiniatura}
+          <div class="animal-tarjeta-datos">
+            <p class="animal-caravana">${animal.caravana_id}</p>
+            <div class="animal-detalles">
+              ${animal.nombre ? `<strong>Nombre:</strong> ${animal.nombre}<br>` : ''}
+              <strong>Sexo:</strong> ${iconoSexo} ${animal.sexo}${textoCast}<br>
+              <strong>Raza:</strong> ${animal.raza}<br>
+              <strong>Categoría:</strong> ${animal.categoria}${textoDest}
+            </div>
+          </div>
         </div>
         ${badgeRetiro}
         <p class="animal-fecha">Alta: ${formatearFecha(animal.fechaAlta)}</p>
-        <!-- Botones de acción: Ver (ojo) y Eliminar (basura) -->
+        <!-- Botones de acción: Ver (ojo), Editar (lápiz) y Eliminar (basura) -->
         <div class="animal-acciones">
           <button
             type="button"
@@ -1025,6 +1037,13 @@ function renderizarInventario(inventario) {
             aria-label="Ver detalles de ${animal.caravana_id}"
             onclick="abrirModalAnimal('${docId}')"
           >${icoOjo} Ver</button>
+          <button
+            type="button"
+            class="btn-accion btn-editar-animal"
+            data-id="${docId}"
+            aria-label="Editar ${animal.caravana_id}"
+            onclick="editarAnimal('${docId}')"
+          >${icoLapiz} Editar</button>
           <button
             type="button"
             class="btn-accion btn-eliminar-animal"
@@ -1147,6 +1166,14 @@ window.abrirModalAnimal = async function(docId) {
   overlay.classList.add('abierto');
   document.body.style.overflow = 'hidden';
 
+  // Guardar el docId actual para que el botón PDF del modal sepa qué animal exportar
+  modalAnimalDocIdActual = docId;
+  const btnPdfModal = document.getElementById('btn-exportar-ficha-pdf');
+  if (btnPdfModal) {
+    // Asignar el handler directamente con el ID capturado en este closure
+    btnPdfModal.onclick = () => exportarFichaIndividual(docId);
+  }
+
   // Mostrar spinners de carga en todos los paneles mientras se consulta Firestore
   ['cargando-observaciones', 'cargando-sanidad', 'cargando-tareas'].forEach(id => {
     const el = document.getElementById(id);
@@ -1168,6 +1195,19 @@ window.abrirModalAnimal = async function(docId) {
 
     const a = docSnap.data(); // Objeto con todos los campos del animal
     const caravana = a.caravana_id || '—';
+
+    // Foto ampliada en cabecera del modal
+    const elFotoCont = document.getElementById('modal-foto-contenedor');
+    const elFotoImg  = document.getElementById('modal-foto-img');
+    if (elFotoCont && elFotoImg) {
+      if (a.foto) {
+        elFotoImg.src = a.foto;
+        elFotoCont.style.display = 'block';
+      } else {
+        elFotoImg.src = '';
+        elFotoCont.style.display = 'none';
+      }
+    }
 
     // ── Llenar CABECERA del modal ──
     const elCaravana = document.getElementById('modal-caravana-titulo');
@@ -1459,6 +1499,8 @@ function listarAnimalesLocales() {
             });
           renderizarInventario(inventario);
           actualizarContadores();
+          // → Repoblar los selectores de Salud y Tareas cuando el inventario cambia
+          actualizarSelectoresAnimales(animalesCache);
           console.log(`[Inventario] ✅ onSnapshot: ${inventario.length} animales.`);
         } catch (innerErr) {
           console.error('[Inventario] ❌ Error procesando snapshot de animales:', innerErr);
@@ -1753,11 +1795,11 @@ async function guardarRegistroSanitario() {
     };
 
     if (tipoRegistroSalud === 'individual') {
-      // ── MODO INDIVIDUAL: buscar el animal por número de caravana en Firestore ──
-      const caravanaRaw = document.getElementById('input-caravana-salud')?.value?.trim() || '';
+      // ── MODO INDIVIDUAL: leer del select dinámico ──
+      const caravanaRaw = (document.getElementById('select-caravana-salud')?.value || '').trim();
+
       if (!caravanaRaw) {
-        mostrarToast('⚠️ Ingresá el Nº de caravana del animal.', 'error');
-        document.getElementById('input-caravana-salud')?.focus();
+        mostrarToast('⚠️ Seleccioná el animal de la lista.', 'error');
         return;
       }
       const caravana = caravanaRaw.toUpperCase();
@@ -1937,12 +1979,16 @@ function mostrarHistorialRapido(animal) {
  * después de un guardado exitoso, incluyendo los estados internos.
  */
 function limpiarFormularioSalud() {
-  // Limpiar inputs de texto y numéricos
-  ['input-caravana-salud', 'input-producto-salud', 'input-dosis-salud',
+  // Limpiar inputs de texto y numéricos (ya no existe input-caravana-salud; usar el select)
+  ['input-producto-salud', 'input-dosis-salud',
    'input-carencia-salud', 'input-obs-salud'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+
+  // Resetear el selector dinámico de animales (modo individual)
+  const selCaravana = document.getElementById('select-caravana-salud');
+  if (selCaravana) selCaravana.value = '';
 
   // Limpiar selector de categoría de lote
   const selCat = document.getElementById('sel-categoria-salud');
@@ -2105,44 +2151,39 @@ function inicializarModuloSalud() {
     });
   }
 
-  // ── Consulta rápida de historial al escribir caravana ──
-  const inputCaravanaSalud = document.getElementById('input-caravana-salud');
-  if (inputCaravanaSalud) {
-    const buscarHistorial = async () => {
-      const caravanaRaw = inputCaravanaSalud.value?.trim() || '';
-      const contenedorHistorial = document.getElementById('historial-sanitarios-rapido');
-      if (!contenedorHistorial) return;
+  // ── Consulta rápida de historial al SELECCIONAR un animal del desplegable ──
+  // Cuando el operario elige un animal del <select>, se carga su historial sanitario
+  // debajo del formulario para consulta rápida sin abrir el modal.
+  const selectCaravanaSalud = document.getElementById('select-caravana-salud');
 
-      if (!caravanaRaw) {
-        contenedorHistorial.innerHTML = '';
-        return;
+  const buscarHistorial = async (caravanaRaw) => {
+    const contenedorHistorial = document.getElementById('historial-sanitarios-rapido');
+    if (!contenedorHistorial || !caravanaRaw?.trim()) {
+      if (contenedorHistorial) contenedorHistorial.innerHTML = '';
+      return;
+    }
+    if (!usuarioActual) return;
+    try {
+      const snap = await db.collection('animales')
+        .where('operario_uid', '==', usuarioActual.uid)
+        .where('caravana_id', '==', caravanaRaw.trim().toUpperCase())
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        mostrarHistorialRapido(snap.docs[0].data());
+      } else {
+        contenedorHistorial.innerHTML = `
+          <p class="historial-vacio" style="color:#e74c3c;">
+            ⚠️ El animal con caravana <strong>${caravanaRaw.toUpperCase()}</strong> no existe en el inventario.
+          </p>`;
       }
+    } catch (error) {
+      console.error('[Sanidad] ❌ Error en consulta rápida de historial:', error);
+    }
+  };
 
-      if (!usuarioActual) return;
-
-      try {
-        const snap = await db.collection('animales')
-          .where('operario_uid', '==', usuarioActual.uid)
-          .where('caravana_id', '==', caravanaRaw.toUpperCase())
-          .limit(1)
-          .get();
-
-        if (!snap.empty) {
-          const animal = snap.docs[0].data();
-          mostrarHistorialRapido(animal);
-        } else {
-          contenedorHistorial.innerHTML = `
-            <p class="historial-vacio" style="color: #e74c3c;">
-              ⚠️ El animal con caravana <strong>${caravanaRaw.toUpperCase()}</strong> no existe en el inventario.
-            </p>`;
-        }
-      } catch (error) {
-        console.error('[Sanidad] ❌ Error en consulta rápida de historial:', error);
-      }
-    };
-
-    inputCaravanaSalud.addEventListener('blur', buscarHistorial);
-    inputCaravanaSalud.addEventListener('change', buscarHistorial);
+  if (selectCaravanaSalud) {
+    selectCaravanaSalud.addEventListener('change', () => buscarHistorial(selectCaravanaSalud.value));
   }
 
   // ── Botón principal de guardado ──
@@ -2228,9 +2269,17 @@ function inicializarVistaTarea() {
 
   // Guardar tarea
   document.getElementById('btn-guardar-tarea')?.addEventListener('click', () => {
-    const ambito = document.getElementById('sel-ambito-tarea').value;
+    let ambito = document.getElementById('sel-ambito-tarea').value;
     const fecha = inputFechaTarea.value;
     const observaciones = document.getElementById('input-obs-tarea').value;
+
+    // Si hay un animal individual seleccionado, el ámbito es esa caravana específica
+    // Esto permite vincular la tarea a la caravana para verla en el modal del animal.
+    const selAnimalTarea = document.getElementById('select-caravana-tareas');
+    const animalEspecifico = selAnimalTarea?.value?.trim() || '';
+    if (animalEspecifico) {
+      ambito = animalEspecifico; // Trazabilidad directa en el historial del modal
+    }
 
     if (!tareaSeleccionada || !ambito || !fecha) {
       mostrarToast('⚠️ Faltan campos obligatorios en el formulario.', 'error');
@@ -2239,13 +2288,14 @@ function inicializarVistaTarea() {
 
     guardarTareaManejo(tareaSeleccionada, ambito, fecha, observaciones);
 
-    // Si es servicio, guardar segunda tarea
+    // Si es servicio, guardar segunda tarea automática de parición
     if (tareaSeleccionada === 'Inicio de Servicio / Encastre' && inputFechaParto.value) {
       guardarTareaManejo('Alerta: Próxima Parición (Programación Automática)', ambito, inputFechaParto.value, 'Generado automáticamente por sistema tras inicio de servicio.');
     }
 
     // Limpiar formulario
     document.getElementById('sel-ambito-tarea').value = '';
+    if (selAnimalTarea) selAnimalTarea.value = '';
     inputFechaTarea.value = '';
     document.getElementById('input-obs-tarea').value = '';
     campoFechaParto.classList.remove('visible');
@@ -2547,6 +2597,505 @@ function actualizarContadores() {
 ============================================================ */
 
 
+/* ============================================================
+   MÓDULO 12: SELECTORES DINÁMICOS DE ANIMALES
+   Rellena automáticamente los <select> de Salud y Tareas
+   con los animales del inventario de Firestore.
+   Se ejecuta cada vez que la colección 'animales' cambia.
+============================================================ */
+
+/**
+ * Limpia y repobla los selectores de animales de Salud y Tareas.
+ * Cada opción tiene "Caravana: [Nro] - [Nombre]"
+ *
+ * @param {Array} animales - Array de animales activos de Firestore.
+ */
+function actualizarSelectoresAnimales(animales) {
+  const ids = ['select-caravana-salud', 'select-caravana-tareas'];
+
+  ids.forEach((selectId) => {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    // Limpiar las opciones previas y agregar el placeholder por defecto
+    select.innerHTML = '<option value="">Seleccione un animal...</option>';
+
+    if (!animales || animales.length === 0) return;
+
+    // Ordenar alfabéticamente por número de caravana
+    const ordenados = [...animales].sort((a, b) =>
+      (a.caravana_id || '').localeCompare(b.caravana_id || '')
+    );
+
+    // Crear una <option> por cada animal: "Caravana: AR-001 - Juanito"
+    ordenados.forEach((animal) => {
+      const caravana = animal.caravana_id || '';
+      const nombre   = animal.nombre || 'Sin Nombre';
+      const option   = document.createElement('option');
+      option.value       = caravana; // caravana como value
+      option.textContent = `Caravana: ${caravana} - ${nombre}`;
+      select.appendChild(option);
+    });
+
+    console.log(`[Selectores] ✅ ${selectId} actualizado con ${ordenados.length} animales.`);
+  });
+}
+
+
+/* ============================================================
+   MÓDULO 13: VALIDACIÓN DE DISPONIBILIDAD DE jsPDF
+   Verifica que la librería esté cargada antes de exportar.
+   Si no está disponible, intenta recargarla dinámicamente.
+============================================================ */
+
+/**
+ * Verifica que window.jspdf esté correctamente definido.
+ * Si no lo está, intenta cargar el script de CDN dinámicamente.
+ *
+ * @returns {Promise<boolean>} true si jsPDF está listo para usar.
+ */
+async function verificarJsPDF() {
+  // Caso 1: Ya está disponible — continuar normalmente
+  if (window.jspdf && typeof window.jspdf.jsPDF === 'function') {
+    return true;
+  }
+
+  console.warn('[PDF] ⚠️ window.jspdf no definido. Intentando recarga dinámica...');
+
+  // Caso 2: No disponible — intentar inyectar los scripts dinámicamente
+  return new Promise((resolve) => {
+    const script1 = document.createElement('script');
+    script1.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    script1.onload = () => {
+      const script2 = document.createElement('script');
+      script2.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+      script2.onload = () => {
+        console.log('[PDF] ✅ jsPDF recargado dinámicamente con éxito.');
+        resolve(true);
+      };
+      script2.onerror = () => {
+        console.error('[PDF] ❌ No se pudo cargar jspdf-autotable dinámicamente.');
+        resolve(false);
+      };
+      document.head.appendChild(script2);
+    };
+    script1.onerror = () => {
+      console.error('[PDF] ❌ No se pudo cargar jsPDF dinámicamente. ¿Sin conexión?');
+      resolve(false);
+    };
+    document.head.appendChild(script1);
+  });
+}
+
+/**
+ * Obtiene los datos del predio/productor desde el DOM o Firestore.
+ * Se usa como encabezado en todos los PDFs generados.
+ *
+ * @returns {{productor: string, establecimiento: string}}
+ */
+function obtenerDatosEncabezado() {
+  const productor      = document.getElementById('input-productor')?.value?.trim()       || 'No registrado';
+  const establecimiento = document.getElementById('input-establecimiento')?.value?.trim() || 'No registrado';
+  return { productor, establecimiento };
+}
+
+
+/* ============================================================
+   MÓDULO 14: EXPORTACIÓN PDF — FICHA INDIVIDUAL DEL ANIMAL
+   Genera un PDF A4 Portrait con todos los datos del animal
+   y sus historiales (Sanidad y Tareas) usando jsPDF + autoTable.
+============================================================ */
+
+/**
+ * Variable global que almacena el ID del documento del animal
+ * que está actualmente abierto en el modal.
+ * Se actualiza en abrirModalAnimal() para que el botón PDF sepa
+ * a qué animal exportar.
+ *
+ * @type {string|null}
+ */
+let modalAnimalDocIdActual = null;
+
+/**
+ * Exporta la ficha completa de un animal individual a PDF (A4 Portrait).
+ *
+ * Incluye:
+ *   - Encabezado con productor, establecimiento y fecha de exportación
+ *   - Datos identificatorios del animal (caravana, raza, categoría, etc.)
+ *   - Edad calculada automáticamente
+ *   - Historial sanitario en tabla
+ *   - Historial de tareas vinculadas en tabla
+ *   - Paginación automática
+ *
+ * @param {string} docId - ID del documento del animal en Firestore.
+ */
+window.exportarFichaIndividual = async function(docId) {
+  if (!docId) {
+    mostrarToast('⚠️ No hay animal seleccionado para exportar.', 'error');
+    return;
+  }
+
+  // Verificar que jsPDF esté disponible (con recarga dinámica si es necesario)
+  const jsPDFDisponible = await verificarJsPDF();
+  if (!jsPDFDisponible) {
+    mostrarToast('Error al generar el PDF, intente nuevamente.', 'error');
+    return;
+  }
+
+  try {
+    mostrarToast('⏳ Generando ficha PDF...', 'info', 4000);
+
+    // ── 1. Obtener datos del animal desde Firestore ──
+    const docSnap = await db.collection('animales').doc(docId).get();
+    if (!docSnap.exists) {
+      mostrarToast('Animal no encontrado. No se puede exportar.', 'error');
+      return;
+    }
+    const a = docSnap.data();
+
+    // ── 2. Obtener datos del encabezado (Módulo Inicio) ──
+    const { productor, establecimiento } = obtenerDatosEncabezado();
+    const fechaExportacion = new Date().toLocaleString('es-AR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+
+    // ── 3. Inicializar jsPDF (A4, Portrait, milímetros) ──
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('p', 'mm', 'a4');
+
+    const margen  = 15;
+    const ancho   = doc.internal.pageSize.getWidth();
+    let y = margen; // Cursor vertical actual
+
+    // ── 4. ENCABEZADO DEL DOCUMENTO ──
+    // Barra de color verde-brand
+    doc.setFillColor(46, 125, 50);
+    doc.rect(0, 0, ancho, 28, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('OvIAgro — Ficha Individual del Animal', margen, 12);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Productor: ${productor}   |   Establecimiento: ${establecimiento}`, margen, 20);
+    doc.text(`Fecha de exportación: ${fechaExportacion}`, margen, 26);
+
+    y = 36;
+    doc.setTextColor(0, 0, 0);
+
+    // ── 5. SECCIÓN: IDENTIFICACIÓN ──
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setFillColor(232, 245, 233);
+    doc.rect(margen, y, ancho - margen * 2, 7, 'F');
+    doc.text('🐑 IDENTIFICACIÓN DEL ANIMAL', margen + 2, y + 5);
+    y += 10;
+
+    // Mapear datos del animal
+    const castradoTexto  = a.castrado ? 'Sí' : 'No';
+    const fechaNac       = a.fecha_nacimiento || null;
+    const edadCalculada  = calcularEdadAnimal(fechaNac);
+    const fechaNacFmt    = fechaNac
+      ? new Date(fechaNac + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : 'No registrada';
+
+    // Tabla de datos identificatorios (dos columnas)
+    doc.autoTable({
+      startY: y,
+      margin: { left: margen, right: margen },
+      theme: 'grid',
+      styles: { fontSize: 10, cellPadding: 3, textColor: [20, 20, 20] },
+      headStyles: { fillColor: [46, 125, 50], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: { 0: { fontStyle: 'bold', fillColor: [248, 255, 248], cellWidth: 55 } },
+      body: [
+        ['Nº de Caravana',  a.caravana_id    || '—'],
+        ['Nombre',          a.nombre          || '—'],
+        ['Sexo',            a.sexo            || '—'],
+        ['Castrado/a',      castradoTexto],
+        ['Raza',            a.raza            || '—'],
+        ['Categoría',       a.categoria       || '—'],
+        ['Fecha Nacimiento',fechaNacFmt],
+        ['Edad Actual',     edadCalculada],
+        ['Peso Nac. (Kg)',  a.peso_nacimiento ? `${a.peso_nacimiento} Kg` : '—'],
+        ['Peso Destete (Kg)', a.peso_destete  ? `${a.peso_destete} Kg`   : '—'],
+        ['Caravana Madre',  a.caravana_madre  || '—'],
+        ['Caravana Padre',  a.caravana_padre  || '—'],
+      ],
+    });
+
+    y = doc.lastAutoTable.finalY + 8;
+
+    // ── 6. HISTORIAL SANITARIO ──
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setFillColor(227, 242, 253);
+    doc.rect(margen, y, ancho - margen * 2, 7, 'F');
+    doc.setTextColor(13, 71, 161);
+    doc.text('💉 HISTORIAL SANITARIO', margen + 2, y + 5);
+    y += 10;
+    doc.setTextColor(0, 0, 0);
+
+    const histSan = Array.isArray(a.historial_sanitario) ? a.historial_sanitario : [];
+    const sanOrdenado = [...histSan].sort((x, b) => new Date(b.fecha || 0) - new Date(x.fecha || 0));
+
+    if (sanOrdenado.length === 0) {
+      doc.autoTable({
+        startY: y,
+        margin: { left: margen, right: margen },
+        theme: 'grid',
+        body: [['Sin registros sanitarios o tareas hasta la fecha']],
+        styles: { textColor: [150, 150, 150], fontStyle: 'italic', halign: 'center' },
+      });
+    } else {
+      doc.autoTable({
+        startY: y,
+        margin: { left: margen, right: margen },
+        theme: 'striped',
+        styles: { fontSize: 9, cellPadding: 2.5 },
+        headStyles: { fillColor: [13, 71, 161], textColor: [255, 255, 255], fontStyle: 'bold' },
+        head: [['Fecha', 'Evento', 'Producto', 'Dosis', 'Vía', 'Famacha']],
+        body: sanOrdenado.map(r => [
+          formatearFecha(r.fecha),
+          r.tipo_evento      || '—',
+          r.producto         || '—',
+          r.dosis            || '—',
+          r.via_administracion || '—',
+          r.famacha ? `${r.famacha}` : '—',
+        ]),
+      });
+    }
+
+    y = doc.lastAutoTable.finalY + 8;
+
+    // ── 7. HISTORIAL DE TAREAS ──
+    // Buscar en Firestore las tareas vinculadas a esta caravana
+    let tareasAnimal = [];
+    try {
+      const snapTar = await db.collection('tareas')
+        .where('operario_uid', '==', usuarioActual.uid)
+        .where('ambito', '==', a.caravana_id || '')
+        .get();
+      tareasAnimal = snapTar.docs.map(d => d.data());
+      tareasAnimal.sort((x, b) => new Date(b.fechaProgramada || 0) - new Date(x.fechaProgramada || 0));
+    } catch (e) {
+      console.warn('[PDF] No se pudieron cargar tareas para la ficha:', e.message);
+    }
+
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setFillColor(255, 243, 224);
+    doc.rect(margen, y, ancho - margen * 2, 7, 'F');
+    doc.setTextColor(230, 81, 0);
+    doc.text('📋 HISTORIAL DE TAREAS DE MANEJO', margen + 2, y + 5);
+    y += 10;
+    doc.setTextColor(0, 0, 0);
+
+    if (tareasAnimal.length === 0) {
+      doc.autoTable({
+        startY: y,
+        margin: { left: margen, right: margen },
+        theme: 'grid',
+        body: [['Sin registros sanitarios o tareas hasta la fecha']],
+        styles: { textColor: [150, 150, 150], fontStyle: 'italic', halign: 'center' },
+      });
+    } else {
+      doc.autoTable({
+        startY: y,
+        margin: { left: margen, right: margen },
+        theme: 'striped',
+        styles: { fontSize: 9, cellPadding: 2.5 },
+        headStyles: { fillColor: [230, 81, 0], textColor: [255, 255, 255], fontStyle: 'bold' },
+        head: [['Fecha Programada', 'Tarea', 'Ámbito', 'Estado', 'Observaciones']],
+        body: tareasAnimal.map(t => [
+          t.fechaProgramada || '—',
+          t.tarea           || '—',
+          t.ambito          || '—',
+          t.completada ? 'Completada' : 'Pendiente',
+          t.observaciones   || '—',
+        ]),
+      });
+    }
+
+    // ── 8. PIE DE PÁGINA con número de página ──
+    const totalPaginas = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPaginas; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Página ${i} de ${totalPaginas}  |  OvIAgro — ${fechaExportacion}`,
+        margen,
+        doc.internal.pageSize.getHeight() - 8
+      );
+    }
+
+    // ── 9. Generar nombre del archivo y disparar descarga ──
+    const caravanaLimpia = (a.caravana_id || 'animal').replace(/[^a-zA-Z0-9-]/g, '_');
+    const nombreArchivo  = `OvIAgro_Ficha_${caravanaLimpia}.pdf`;
+    doc.save(nombreArchivo);
+
+    mostrarToast(`✅ Ficha de ${a.caravana_id} exportada con éxito.`, 'exito', 4000);
+    console.log(`[PDF] ✅ Ficha individual exportada: ${nombreArchivo}`);
+
+  } catch (error) {
+    console.error('[PDF] ❌ Error al generar la ficha PDF:', error);
+    mostrarToast('Error al generar el PDF, intente nuevamente.', 'error', 5000);
+  }
+};
+
+
+/* ============================================================
+   MÓDULO 15: EXPORTACIÓN PDF — INVENTARIO GENERAL
+   Genera un PDF A4 Landscape con todos los animales activos
+   del inventario. Encabezado profesional y paginación.
+============================================================ */
+
+/**
+ * Exporta el inventario completo de animales a PDF (A4 Landscape).
+ *
+ * Incluye:
+ *   - Encabezado con productor, establecimiento, fecha y total
+ *   - Tabla con columnas distribuidas: Caravana, Sexo, Raza, etc.
+ *   - Paginación automática "Página X de Y" en el pie de página
+ *   - Prevención de desbordamiento de columnas con orientación horizontal
+ */
+window.exportarInventarioGeneral = async function() {
+  if (!usuarioActual) {
+    mostrarToast('Sesión no iniciada. Recargá la app.', 'error');
+    return;
+  }
+
+  // Verificar disponibilidad de jsPDF
+  const jsPDFDisponible = await verificarJsPDF();
+  if (!jsPDFDisponible) {
+    mostrarToast('Error al generar el PDF, intente nuevamente.', 'error');
+    return;
+  }
+
+  try {
+    mostrarToast('⏳ Generando inventario PDF...', 'info', 5000);
+
+    // Usar la caché en memoria (ya cargada por onSnapshot)
+    const inventario = [...animalesCache].sort((a, b) =>
+      (a.caravana_id || '').localeCompare(b.caravana_id || '')
+    );
+
+    if (inventario.length === 0) {
+      mostrarToast('⚠️ No hay animales en el inventario para exportar.', 'error');
+      return;
+    }
+
+    // ── Datos del encabezado ──
+    const { productor, establecimiento } = obtenerDatosEncabezado();
+    const fechaExportacion = new Date().toLocaleString('es-AR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+
+    // ── Inicializar jsPDF en modo Landscape (horizontal) ──
+    // Landscape previene el desbordamiento de columnas en tablas anchas.
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('l', 'mm', 'a4'); // 'l' = landscape
+
+    const margen = 12;
+    const ancho  = doc.internal.pageSize.getWidth();  // ~297mm en A4 landscape
+
+    // ── ENCABEZADO PROFESIONAL ──
+    doc.setFillColor(46, 125, 50);
+    doc.rect(0, 0, ancho, 26, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('OvIAgro — Inventario Completo de Hacienda', margen, 11);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Productor: ${productor}   |   Establecimiento: ${establecimiento}   |   Total: ${inventario.length} animales`, margen, 18);
+    doc.text(`Fecha de exportación: ${fechaExportacion}`, margen, 24);
+
+    doc.setTextColor(0, 0, 0);
+
+    // ── TABLA PRINCIPAL con autoTable ──
+    doc.autoTable({
+      startY: 30,
+      margin: { left: margen, right: margen },
+      theme: 'striped',
+      styles: {
+        fontSize: 8.5,
+        cellPadding: 3,
+        textColor: [20, 20, 20],
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor:  [27, 94, 32],
+        textColor:  [255, 255, 255],
+        fontStyle:  'bold',
+        fontSize:   9,
+      },
+      alternateRowStyles: { fillColor: [240, 255, 240] },
+      // Columnas bien distribuidas para no desbordar en A4 landscape
+      columnStyles: {
+        0: { cellWidth: 35 }, // Nº Caravana
+        1: { cellWidth: 20 }, // Sexo
+        2: { cellWidth: 35 }, // Raza
+        3: { cellWidth: 45 }, // Categoría
+        4: { cellWidth: 30 }, // Fecha Nac.
+        5: { cellWidth: 55 }, // Pesos
+        6: { cellWidth: 55 }, // Padres
+      },
+      head: [['Nº Caravana', 'Sexo', 'Raza', 'Categoría', 'Fecha Nac.', 'Pesos', 'Padres']],
+      body: inventario.map(a => [
+        a.caravana_id || '—',
+        a.sexo        || '—',
+        a.raza        || '—',
+        a.categoria   || '—',
+        a.fecha_nacimiento
+          ? new Date(a.fecha_nacimiento + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          : '—',
+        `Nac: ${a.peso_nacimiento || '—'} Kg / Dest: ${a.peso_destete || '—'} Kg`,
+        `Madre: ${a.caravana_madre || '—'} / Padre: ${a.caravana_padre || '—'}`,
+      ]),
+      // Hook: paginación automática "Página X de Y" en el pie de cada página
+      didDrawPage: (data) => {
+        const totalPaginas = doc.internal.getNumberOfPages();
+        const paginaActual = doc.internal.getCurrentPageInfo().pageNumber;
+        doc.setFontSize(8);
+        doc.setTextColor(160, 160, 160);
+        doc.text(
+          `Página ${paginaActual} de ${totalPaginas}  |  OvIAgro — ${fechaExportacion}  |  ${establecimiento}`,
+          margen,
+          doc.internal.pageSize.getHeight() - 6
+        );
+        doc.setTextColor(0, 0, 0);
+      },
+    });
+
+    // ── Disparar descarga del archivo ──
+    const fecha = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `OvIAgro_Inventario_${fecha}.pdf`;
+    doc.save(nombreArchivo);
+
+    mostrarToast(`✅ Inventario (${inventario.length} animales) exportado con éxito.`, 'exito', 5000);
+    console.log(`[PDF] ✅ Inventario general exportado: ${nombreArchivo}`);
+
+  } catch (error) {
+    console.error('[PDF] ❌ Error al generar el inventario PDF:', error);
+    mostrarToast('Error al generar el PDF, intente nuevamente.', 'error', 5000);
+  }
+};
+
+/**
+ * Función provisional para la edición de animales en el inventario.
+ * @param {string} docId - ID del documento del animal.
+ */
+window.editarAnimal = function(docId) {
+  mostrarToast('ℹ️ Función de edición en desarrollo.', 'info');
+};
+
 
 
 /* ============================================================
@@ -2584,7 +3133,19 @@ function inicializarAppUnaVez() {
   // Conecta el botón X, el overlay de cierre y las pestañas de historiales.
   inicializarModal();
 
-  // 7. Cargar contadores iniciales vacíos
+  // 7. Conectar botones de exportación PDF
+  document.getElementById('btn-exportar-inventario-pdf')?.addEventListener('click', () => {
+    exportarInventarioGeneral();
+  });
+  document.getElementById('btn-exportar-ficha-pdf')?.addEventListener('click', () => {
+    if (modalAnimalDocIdActual) {
+      exportarFichaIndividual(modalAnimalDocIdActual);
+    } else {
+      mostrarToast('⚠️ No hay animal seleccionado para exportar.', 'error');
+    }
+  });
+
+  // 8. Cargar contadores iniciales vacíos
   actualizarContadores();
 
   appInicializada = true;

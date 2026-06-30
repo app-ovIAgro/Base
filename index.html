@@ -25,6 +25,16 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
+  <!-- ============================================================
+       LIBRERÍAS DE EXPORTACIÓN PDF (Orden de dependencia obligatorio)
+       1. jsPDF — Motor de generación de documentos PDF en el navegador
+       2. jspdf-autotable — Plugin para tablas profesionales en PDF
+       Ambas URLs están en ARCHIVOS_A_CACHEAR del Service Worker
+       para garantizar el funcionamiento 100% OFFLINE en el campo.
+  ============================================================ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
   <style>
     /* ============================================================
        SISTEMA DE DISEÑO — OvIAgro La Rioja
@@ -928,6 +938,37 @@
       position: relative;
       overflow: hidden;
       color: #000000;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .animal-tarjeta-cuerpo {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .mini-foto-animal {
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      border: 2px solid var(--color-borde);
+      overflow: hidden;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--color-superficie-2);
+    }
+    .mini-foto-animal img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .mini-foto-animal.vacio {
+      font-size: 1.8rem;
+    }
+    .animal-tarjeta-datos {
+      flex: 1;
     }
     .animal-tarjeta::before {
       content: '';
@@ -1479,6 +1520,17 @@
       color: #ffffff;
     }
 
+    /* Botón Editar (lápiz) — naranja */
+    .btn-editar-animal {
+      background-color: #fff9eb;
+      border-color: #f39c12;
+      color: #d35400;
+    }
+    .btn-editar-animal:hover {
+      background-color: #f39c12;
+      color: #ffffff;
+    }
+
     /* Botón Eliminar (basura) — rojo */
     .btn-eliminar-animal {
       background-color: #fff0f0;
@@ -1740,6 +1792,76 @@
       padding: 24px;
       color: #aaa;
       font-size: 0.88rem;
+    }
+
+    /* ============================================================
+       BOTONES DE EXPORTACIÓN PDF — OvIAgro
+       Color rojo brillante #d32f2f para visibilidad máxima en campo.
+       Mínimo 44px de alto para acceso táctil seguro con guantes.
+    ============================================================ */
+
+    /* Botones PDF Rojo vibrante de alta visibilidad (#d32f2f) */
+    .btn-pdf-rojo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 48px;
+      padding: 14px 20px;
+      background-color: #d32f2f;
+      color: #ffffff;
+      font-family: var(--fuente-principal);
+      font-size: 1rem;
+      font-weight: bold;
+      border: none;
+      border-radius: var(--radio-borde);
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+      box-shadow: 0 4px 14px rgba(211,47,47,0.4);
+      margin-bottom: 16px;
+    }
+    .btn-pdf-rojo:hover {
+      background-color: #b71c1c; /* Se oscurece al pasar el cursor */
+      box-shadow: 0 6px 20px rgba(183,28,28,0.55);
+    }
+    .btn-pdf-rojo:active {
+      transform: scale(0.97);
+      background-color: #991b1b;
+    }
+
+    /* Sección PDF en el modal: separa el botón del resto del contenido */
+    .modal-seccion-pdf {
+      padding: 16px 20px;
+      border-top: 2px solid #f0f0f0;
+      background-color: #fafafa;
+    }
+
+    /* Selector de animales (reemplaza el input manual en Salud y Tareas) */
+    .campo-select-animal {
+      width: 100%;
+      padding: 14px 16px;
+      background-color: #ffffff;
+      border: 2px solid var(--color-borde);
+      border-radius: var(--radio-borde);
+      color: var(--color-texto);
+      font-family: var(--fuente-principal);
+      font-size: 1.05rem;
+      font-weight: bold;
+      transition: border-color var(--transicion), box-shadow var(--transicion);
+      -webkit-appearance: none;
+      appearance: none;
+      cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 44px;
+    }
+    .campo-select-animal:focus {
+      outline: none;
+      border-color: var(--color-primario);
+      box-shadow: 0 0 0 3px rgba(46,204,113,0.25);
     }
   </style>
 </head>
@@ -2189,6 +2311,17 @@
       <p class="seccion-titulo">Inventario de Animales</p>
       <p class="seccion-subtitulo">Tocá el 👁️ para ver el detalle completo o el 🗑️ para eliminar un animal.</p>
 
+      <!-- Botón de exportación PDF del inventario completo -->
+      <button
+        id="btn-exportar-inventario-pdf"
+        type="button"
+        class="btn-pdf-rojo"
+        onclick="exportarInventarioGeneral()"
+        aria-label="Exportar inventario completo a PDF"
+      >
+        📊 Exportar Inventario Completo
+      </button>
+
       <div id="inventario-contador" class="inventario-contador" aria-live="polite" aria-label="Cantidad de animales registrados">
         <!-- Actualizado por JavaScript -->
       </div>
@@ -2238,18 +2371,16 @@
           </div>
 
           <div id="campo-caravana-salud" class="campo-grupo campo-dinamico visible">
-            <label for="input-caravana-salud" class="campo-etiqueta requerido">2. Nº de Caravana del Animal</label>
-            <input
-              id="input-caravana-salud"
-              type="text"
-              class="campo-input"
-              placeholder="Ej: AR-00123"
-              maxlength="20"
-              autocomplete="off"
-              autocapitalize="characters"
-              spellcheck="false"
+            <label for="select-caravana-salud" class="campo-etiqueta requerido">2. Animal (Caravana)</label>
+            <!-- SELECTOR DINÁMICO: Reemplaza el input manual por un select -->
+            <select
+              id="select-caravana-salud"
+              class="campo-select-animal"
+              required
               aria-required="true"
-            />
+            >
+              <option value="">Seleccione un animal...</option>
+            </select>
           </div>
 
           <div id="campo-lote-salud" class="campo-grupo campo-dinamico">
@@ -2448,7 +2579,7 @@
             </div>
           </div>
 
-          <!-- 2. Ámbito de la Tarea* -->
+          <!-- 2. Ámbito de la Tarea* con opción de Animal Individual -->
           <div class="campo-grupo">
             <label for="sel-ambito-tarea" class="campo-etiqueta requerido">2. Ámbito de la Tarea</label>
             <select id="sel-ambito-tarea" class="campo-select" required aria-required="true">
@@ -2460,6 +2591,18 @@
               <option value="Oveja Adulta / Carnero (3 años)">Oveja Adulta / Carnero (3 años)</option>
               <option value="Oveja Adulta / Carnero (4 años o más)">Oveja Adulta / Carnero (4 años o más)</option>
             </select>
+          </div>
+
+          <!-- SELECTOR DINÁMICO: Animal individual para vincular tarea a caravana específica -->
+          <div class="campo-grupo">
+            <label for="select-caravana-tareas" class="campo-etiqueta">Animal Específico (Opcional)</label>
+            <select
+              id="select-caravana-tareas"
+              class="campo-select-animal"
+            >
+              <option value="">Seleccione un animal...</option>
+            </select>
+            <p style="font-size: 0.78rem; color: #888; margin-top: 6px; font-weight: normal;">Si seleccionás un animal, la tarea quedará vinculada específicamente a esa caravana.</p>
           </div>
 
           <!-- 3. Fecha Programada* -->
@@ -2629,7 +2772,11 @@
     <div id="modal-animal-panel">
 
       <!-- CABECERA DEL MODAL: Número de caravana y botón de cierre -->
-      <header class="modal-cabecera">
+      <header class="modal-cabecera" style="display: flex; align-items: center;">
+        <!-- Contenedor para foto ampliada del animal -->
+        <div id="modal-foto-contenedor" style="display: none; width: 60px; height: 60px; border-radius: 50%; overflow: hidden; border: 2px solid white; flex-shrink: 0; margin-right: 12px;">
+          <img id="modal-foto-img" src="" alt="Foto del animal" style="width: 100%; height: 100%; object-fit: cover;">
+        </div>
         <div class="modal-cabecera-info">
           <p class="modal-caravana-badge">Nº de Caravana</p>
           <!-- ID para aria-labelledby: anuncia el número al lector de pantalla -->
@@ -2742,6 +2889,18 @@
           </div>
 
         </div><!-- /sección historiales -->
+
+        <!-- SECCIÓN PDF: Botón de exportación de la ficha individual del animal -->
+        <div class="modal-seccion-pdf">
+          <button
+            id="btn-exportar-ficha-pdf"
+            type="button"
+            class="btn-pdf-rojo"
+            aria-label="Exportar ficha completa del animal a PDF"
+          >
+            📄 Exportar Ficha a PDF
+          </button>
+        </div>
 
       </div><!-- /modal-cuerpo -->
     </div><!-- /modal-animal-panel -->

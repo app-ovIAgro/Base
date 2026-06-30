@@ -28,14 +28,14 @@
 ============================================================ */
 
 /** Nombre único de esta versión de la caché */
-const NOMBRE_CACHE = 'oviagro-pwa-v2';
+const NOMBRE_CACHE = 'oviagro-pwa-v3';
 
 /**
  * Lista de archivos esenciales que se descargarán y guardarán
  * durante la instalación del SW. Son todo lo necesario para
  * que la app funcione sin internet desde el primer uso.
  */
-const ARCHIVOS_A_CACHEAR = [
+const urlsToCache = [
   './',
   './index.html',
   './app.js',
@@ -43,6 +43,11 @@ const ARCHIVOS_A_CACHEAR = [
   // Íconos obligatorios de la PWA (para instalación y pantalla de inicio)
   './icons/icon-192x192.png',
   './icons/icon-512x512.png',
+  // ── LIBRERÍAS DE EXPORTACIÓN PDF (para funcionamiento 100% offline en el campo) ──
+  // jsPDF: genera documentos PDF en el navegador, sin servidor
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  // jspdf-autotable: plugin para generar tablas profesionales dentro del PDF
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
 ];
 
 /**
@@ -79,7 +84,7 @@ self.addEventListener('install', (evento) => {
         console.log('[SW OvIAgro] Caché abierta. Descargando archivos esenciales...');
         // addAll descarga y guarda TODOS los archivos de la lista.
         // Si falla UNO SOLO, toda la instalación falla (comportamiento seguro).
-        return cache.addAll(ARCHIVOS_A_CACHEAR);
+        return cache.addAll(urlsToCache);
       })
       .then(() => {
         console.log('[SW OvIAgro] ✅ Todos los archivos cacheados correctamente.');
