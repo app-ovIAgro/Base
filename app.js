@@ -564,6 +564,65 @@ function sanitizarTexto(texto) {
 }
 
 /**
+ * Decodifica entidades HTML a sus caracteres correspondientes.
+ * Especialmente útil para jsPDF que no interpreta entidades como &#x2F; de forma nativa.
+ * @param {string} texto - El texto sanitizado.
+ * @returns {string} El texto decodificado.
+ */
+function decodificarTexto(texto) {
+  if (typeof texto !== 'string') return '';
+  return texto
+    .replace(/&#x2F;/g, '/')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Normaliza un texto para imprimirlo de forma segura en jsPDF con la fuente helvetica.
+ * 1) Decodifica entidades HTML (&#x2F; → /, &amp; → &, etc.)
+ * 2) Reemplaza vocales con tilde y ñ por sus equivalentes sin diacríticos, ya que la
+ *    fuente helvetica integrada en jsPDF no soporta codificación UTF-8 extendida y
+ *    produce caracteres extraños (σ=Ù, ØÜË, etc.) si se le pasan directamente.
+ *
+ * @param {string|any} texto - Texto crudo (puede venir sanitizado con entidades HTML).
+ * @returns {string} Texto listo para doc.text() o para celdas de doc.autoTable().
+ */
+function normalizarParaPDF(texto) {
+  if (texto === null || texto === undefined) return '';
+  const s = String(texto);
+  return decodificarTexto(s)
+    // Vocales con tilde
+    .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i')
+    .replace(/ó/g, 'o').replace(/ú/g, 'u').replace(/ü/g, 'u')
+    .replace(/Á/g, 'A').replace(/É/g, 'E').replace(/Í/g, 'I')
+    .replace(/Ó/g, 'O').replace(/Ú/g, 'U').replace(/Ü/g, 'U')
+    // Ñ / ñ
+    .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
+    // Comillas tipográficas
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+    // Guion em / en → guion simple
+    .replace(/[\u2013\u2014]/g, '-');
+}
+
+/**
+ * Lee los datos del productor y establecimiento desde los inputs del módulo Inicio.
+ * Si los campos están vacíos, devuelve placeholders seguros para el encabezado del PDF.
+ *
+ * @returns {{ productor: string, establecimiento: string }}
+ */
+function obtenerDatosEncabezado() {
+  const productor      = (document.getElementById('input-productor')?.value      || 'No especificado').trim();
+  const establecimiento = (document.getElementById('input-establecimiento')?.value || 'No especificado').trim();
+  return {
+    productor:      normalizarParaPDF(productor),
+    establecimiento: normalizarParaPDF(establecimiento),
+  };
+}
+
+/**
  * Genera un ID único para cada registro basado en timestamp + random.
  * @returns {string} ID único en formato string.
  */
@@ -2766,43 +2825,48 @@ window.exportarFichaIndividual = async function(docId) {
 
     const margen  = 15;
     const ancho   = doc.internal.pageSize.getWidth();
-    let y = margen; // Cursor vertical actual
+    let y = margen;
 
     // ── 4. ENCABEZADO DEL DOCUMENTO ──
-    // Barra de color verde-brand
     doc.setFillColor(46, 125, 50);
     doc.rect(0, 0, ancho, 28, 'F');
 
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('OvIAgro — Ficha Individual del Animal', margen, 12);
+    doc.text('OvIAgro - Ficha Individual del Animal', margen, 12);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(`Productor: ${productor}   |   Establecimiento: ${establecimiento}`, margen, 20);
-    doc.text(`Fecha de exportación: ${fechaExportacion}`, margen, 26);
+    doc.text(`Fecha de exportacion: ${fechaExportacion}`, margen, 26);
 
     y = 36;
     doc.setTextColor(0, 0, 0);
 
-    // ── 5. SECCIÓN: IDENTIFICACIÓN ──
+    // ── 5. SECCION: 1. IDENTIFICACION DEL ANIMAL ──
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.setFillColor(232, 245, 233);
     doc.rect(margen, y, ancho - margen * 2, 7, 'F');
-    doc.text('🐑 IDENTIFICACIÓN DEL ANIMAL', margen + 2, y + 5);
+    doc.setTextColor(27, 94, 32);
+    doc.text('1. IDENTIFICACION DEL ANIMAL', margen + 2, y + 5);
+    doc.setTextColor(0, 0, 0);
     y += 10;
 
-    // Mapear datos del animal
-    const castradoTexto  = a.castrado ? 'Sí' : 'No';
-    const fechaNac       = a.fecha_nacimiento || null;
-    const edadCalculada  = calcularEdadAnimal(fechaNac);
-    const fechaNacFmt    = fechaNac
+    // Mapear datos del animal (todos normalizados para PDF)
+    const castradoTexto = a.castrado ? 'Si' : 'No';
+    const fechaNac      = a.fecha_nacimiento || null;
+    const edadCalculada = calcularEdadAnimal(fechaNac);
+    const fechaNacFmt   = fechaNac
       ? new Date(fechaNac + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
       : 'No registrada';
 
-    // Tabla de datos identificatorios (dos columnas)
+    const pesoNacTexto   = a.peso_nacimiento  ? `${a.peso_nacimiento} Kg`  : '—';
+    const pesoDestTexto  = a.peso_destete     ? `${a.peso_destete} Kg`     : '—';
+    const caravanaMadre  = normalizarParaPDF(a.caravana_madre) || '—';
+    const caravanaPadre  = normalizarParaPDF(a.caravana_padre) || '—';
+
     doc.autoTable({
       startY: y,
       margin: { left: margen, right: margen },
@@ -2811,34 +2875,34 @@ window.exportarFichaIndividual = async function(docId) {
       headStyles: { fillColor: [46, 125, 50], textColor: [255, 255, 255], fontStyle: 'bold' },
       columnStyles: { 0: { fontStyle: 'bold', fillColor: [248, 255, 248], cellWidth: 55 } },
       body: [
-        ['Nº de Caravana',  a.caravana_id    || '—'],
-        ['Nombre',          a.nombre          || '—'],
-        ['Sexo',            a.sexo            || '—'],
-        ['Castrado/a',      castradoTexto],
-        ['Raza',            a.raza            || '—'],
-        ['Categoría',       a.categoria       || '—'],
-        ['Fecha Nacimiento',fechaNacFmt],
-        ['Edad Actual',     edadCalculada],
-        ['Peso Nac. (Kg)',  a.peso_nacimiento ? `${a.peso_nacimiento} Kg` : '—'],
-        ['Peso Destete (Kg)', a.peso_destete  ? `${a.peso_destete} Kg`   : '—'],
-        ['Caravana Madre',  a.caravana_madre  || '—'],
-        ['Caravana Padre',  a.caravana_padre  || '—'],
+        ['N de Caravana',    normalizarParaPDF(a.caravana_id) || '—'],
+        ['Nombre',           normalizarParaPDF(a.nombre)       || '—'],
+        ['Sexo',             normalizarParaPDF(a.sexo)         || '—'],
+        ['Castrado/a',       castradoTexto],
+        ['Raza',             normalizarParaPDF(a.raza)         || '—'],
+        ['Categoria',        normalizarParaPDF(a.categoria)    || '—'],
+        ['Fecha Nacimiento', fechaNacFmt],
+        ['Edad Actual',      normalizarParaPDF(edadCalculada)],
+        ['Peso Nac. (Kg)',   pesoNacTexto],
+        ['Peso Destete (Kg)',pesoDestTexto],
+        ['Caravana Madre',   caravanaMadre],
+        ['Caravana Padre',   caravanaPadre],
       ],
     });
 
     y = doc.lastAutoTable.finalY + 8;
 
-    // ── 6. HISTORIAL SANITARIO ──
+    // ── 6. SECCION: 2. HISTORIAL SANITARIO ──
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.setFillColor(227, 242, 253);
     doc.rect(margen, y, ancho - margen * 2, 7, 'F');
     doc.setTextColor(13, 71, 161);
-    doc.text('💉 HISTORIAL SANITARIO', margen + 2, y + 5);
-    y += 10;
+    doc.text('2. HISTORIAL SANITARIO', margen + 2, y + 5);
     doc.setTextColor(0, 0, 0);
+    y += 10;
 
-    const histSan = Array.isArray(a.historial_sanitario) ? a.historial_sanitario : [];
+    const histSan     = Array.isArray(a.historial_sanitario) ? a.historial_sanitario : [];
     const sanOrdenado = [...histSan].sort((x, b) => new Date(b.fecha || 0) - new Date(x.fecha || 0));
 
     if (sanOrdenado.length === 0) {
@@ -2846,7 +2910,7 @@ window.exportarFichaIndividual = async function(docId) {
         startY: y,
         margin: { left: margen, right: margen },
         theme: 'grid',
-        body: [['Sin registros sanitarios o tareas hasta la fecha']],
+        body: [['Sin registros sanitarios hasta la fecha']],
         styles: { textColor: [150, 150, 150], fontStyle: 'italic', halign: 'center' },
       });
     } else {
@@ -2856,22 +2920,21 @@ window.exportarFichaIndividual = async function(docId) {
         theme: 'striped',
         styles: { fontSize: 9, cellPadding: 2.5 },
         headStyles: { fillColor: [13, 71, 161], textColor: [255, 255, 255], fontStyle: 'bold' },
-        head: [['Fecha', 'Evento', 'Producto', 'Dosis', 'Vía', 'Famacha']],
+        head: [['Fecha', 'Evento', 'Producto', 'Dosis', 'Via', 'Famacha']],
         body: sanOrdenado.map(r => [
           formatearFecha(r.fecha),
-          r.tipo_evento      || '—',
-          r.producto         || '—',
-          r.dosis            || '—',
-          r.via_administracion || '—',
-          r.famacha ? `${r.famacha}` : '—',
+          normalizarParaPDF(r.tipo_evento)       || '—',
+          normalizarParaPDF(r.producto)          || '—',
+          normalizarParaPDF(r.dosis)             || '—',
+          normalizarParaPDF(r.via_administracion) || '—',
+          r.famacha != null ? `${r.famacha}` : '—',
         ]),
       });
     }
 
     y = doc.lastAutoTable.finalY + 8;
 
-    // ── 7. HISTORIAL DE TAREAS ──
-    // Buscar en Firestore las tareas vinculadas a esta caravana
+    // ── 7. SECCION: 3. HISTORIAL DE TAREAS DE MANEJO ──
     let tareasAnimal = [];
     try {
       const snapTar = await db.collection('tareas')
@@ -2889,16 +2952,16 @@ window.exportarFichaIndividual = async function(docId) {
     doc.setFillColor(255, 243, 224);
     doc.rect(margen, y, ancho - margen * 2, 7, 'F');
     doc.setTextColor(230, 81, 0);
-    doc.text('📋 HISTORIAL DE TAREAS DE MANEJO', margen + 2, y + 5);
-    y += 10;
+    doc.text('3. HISTORIAL DE TAREAS DE MANEJO', margen + 2, y + 5);
     doc.setTextColor(0, 0, 0);
+    y += 10;
 
     if (tareasAnimal.length === 0) {
       doc.autoTable({
         startY: y,
         margin: { left: margen, right: margen },
         theme: 'grid',
-        body: [['Sin registros sanitarios o tareas hasta la fecha']],
+        body: [['Sin tareas de manejo registradas hasta la fecha']],
         styles: { textColor: [150, 150, 150], fontStyle: 'italic', halign: 'center' },
       });
     } else {
@@ -2908,25 +2971,25 @@ window.exportarFichaIndividual = async function(docId) {
         theme: 'striped',
         styles: { fontSize: 9, cellPadding: 2.5 },
         headStyles: { fillColor: [230, 81, 0], textColor: [255, 255, 255], fontStyle: 'bold' },
-        head: [['Fecha Programada', 'Tarea', 'Ámbito', 'Estado', 'Observaciones']],
+        head: [['Fecha Programada', 'Tarea', 'Ambito', 'Estado', 'Observaciones']],
         body: tareasAnimal.map(t => [
           t.fechaProgramada || '—',
-          t.tarea           || '—',
-          t.ambito          || '—',
+          normalizarParaPDF(t.tarea)        || '—',
+          normalizarParaPDF(t.ambito)       || '—',
           t.completada ? 'Completada' : 'Pendiente',
-          t.observaciones   || '—',
+          normalizarParaPDF(t.observaciones) || '—',
         ]),
       });
     }
 
-    // ── 8. PIE DE PÁGINA con número de página ──
+    // ── 8. PIE DE PÁGINA (número de página en cada hoja) ──
     const totalPaginas = doc.internal.getNumberOfPages();
     for (let i = 1; i <= totalPaginas; i++) {
       doc.setPage(i);
       doc.setFontSize(8);
       doc.setTextColor(150, 150, 150);
       doc.text(
-        `Página ${i} de ${totalPaginas}  |  OvIAgro — ${fechaExportacion}`,
+        `Pagina ${i} de ${totalPaginas}  |  OvIAgro - ${fechaExportacion}`,
         margen,
         doc.internal.pageSize.getHeight() - 8
       );
@@ -3010,12 +3073,12 @@ window.exportarInventarioGeneral = async function() {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text('OvIAgro — Inventario Completo de Hacienda', margen, 11);
+    doc.text('OvIAgro - Inventario Completo de Hacienda', margen, 11);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(`Productor: ${productor}   |   Establecimiento: ${establecimiento}   |   Total: ${inventario.length} animales`, margen, 18);
-    doc.text(`Fecha de exportación: ${fechaExportacion}`, margen, 24);
+    doc.text(`Fecha de exportacion: ${fechaExportacion}`, margen, 24);
 
     doc.setTextColor(0, 0, 0);
 
@@ -3025,7 +3088,7 @@ window.exportarInventarioGeneral = async function() {
       margin: { left: margen, right: margen },
       theme: 'striped',
       styles: {
-        fontSize: 8.5,
+        fontSize: 9,
         cellPadding: 3,
         textColor: [20, 20, 20],
         overflow: 'linebreak',
@@ -3039,25 +3102,25 @@ window.exportarInventarioGeneral = async function() {
       alternateRowStyles: { fillColor: [240, 255, 240] },
       // Columnas bien distribuidas para no desbordar en A4 landscape
       columnStyles: {
-        0: { cellWidth: 35 }, // Nº Caravana
-        1: { cellWidth: 20 }, // Sexo
-        2: { cellWidth: 35 }, // Raza
-        3: { cellWidth: 45 }, // Categoría
-        4: { cellWidth: 30 }, // Fecha Nac.
-        5: { cellWidth: 55 }, // Pesos
-        6: { cellWidth: 55 }, // Padres
+        0: { cellWidth: 25 }, // Nº Caravana
+        1: { cellWidth: 18 }, // Sexo
+        2: { cellWidth: 42 }, // Raza
+        3: { cellWidth: 52 }, // Categoría
+        4: { cellWidth: 26 }, // Fecha Nac.
+        5: { cellWidth: 52 }, // Pesos
+        6: { cellWidth: 52 }, // Padres
       },
-      head: [['Nº Caravana', 'Sexo', 'Raza', 'Categoría', 'Fecha Nac.', 'Pesos', 'Padres']],
+      head: [['Nº Caravana', 'Sexo', 'Raza', 'Categoria', 'Fecha Nac.', 'Pesos', 'Padres']],
       body: inventario.map(a => [
-        a.caravana_id || '—',
-        a.sexo        || '—',
-        a.raza        || '—',
-        a.categoria   || '—',
+        normalizarParaPDF(a.caravana_id) || '—',
+        normalizarParaPDF(a.sexo)        || '—',
+        normalizarParaPDF(a.raza)        || '—',
+        normalizarParaPDF(a.categoria)   || '—',
         a.fecha_nacimiento
           ? new Date(a.fecha_nacimiento + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
           : '—',
         `Nac: ${a.peso_nacimiento || '—'} Kg / Dest: ${a.peso_destete || '—'} Kg`,
-        `Madre: ${a.caravana_madre || '—'} / Padre: ${a.caravana_padre || '—'}`,
+        normalizarParaPDF(`Madre: ${a.caravana_madre || '—'} / Padre: ${a.caravana_padre || '—'}`),
       ]),
       // Hook: paginación automática "Página X de Y" en el pie de cada página
       didDrawPage: (data) => {
@@ -3066,7 +3129,7 @@ window.exportarInventarioGeneral = async function() {
         doc.setFontSize(8);
         doc.setTextColor(160, 160, 160);
         doc.text(
-          `Página ${paginaActual} de ${totalPaginas}  |  OvIAgro — ${fechaExportacion}  |  ${establecimiento}`,
+          `Pagina ${paginaActual} de ${totalPaginas}  |  OvIAgro - ${fechaExportacion}  |  ${establecimiento}`,
           margen,
           doc.internal.pageSize.getHeight() - 6
         );
