@@ -34,6 +34,13 @@ let deferredPrompt = null;
 // Variable global para mantener el inventario en memoria caché local y actualizar los contadores
 let animalesCache = [];
 
+/**
+ * Variable de control de estado de edición.
+ * NULL  → el formulario de Alta está en modo CREAR (addDoc).
+ * string → el formulario está en modo EDITAR (updateDoc) con el ID del doc.
+ */
+let idAnimalEnEdicion = null;
+
 /* ============================================================
    MÓDULO 0: REGISTRO DEL SERVICE WORKER (PWA)
    Se registra PRIMERO, antes de cualquier otra inicialización,
@@ -738,6 +745,16 @@ function navegarA(nombreVista) {
     if (historialRapido) historialRapido.innerHTML = '';
   }
 
+  // ── LIMPIEZA DE ESTADO CRÍTICA ──
+  // Si navegamos a la vista de Alta Animal (botón "+" de la navbar),
+  // SIEMPRE resetear idAnimalEnEdicion y limpiar el formulario.
+  // Esto garantiza que el formulario arranque en MODO CREAR (addDoc)
+  // y no quede "atascado" en modo EDITAR (updateDoc) por un estado residual.
+  if (nombreVista === 'alta') {
+    idAnimalEnEdicion = null;
+    limpiarFormularioAlta();
+  }
+
   console.log(`[Router] ✅ Navegando a: ${nombreVista}`);
 }
 
@@ -994,6 +1011,86 @@ async function guardarAnimalLocal(nuevoAnimal) {
   } catch (error) {
     console.error('[Inventario] ❌ Error inesperado al guardar animal en Firestore:', error);
     mostrarToast('Error al guardar. Verificá tu conexión e intentá de nuevo.', 'error');
+    return false;
+  }
+}
+
+/**
+ * Actualiza un documento de animal en Firestore desde los campos del formulario
+ * de Alta cuando éste se encuentra en MODO EDITAR (idAnimalEnEdicion !== null).
+ *
+ * A diferencia de guardarAnimalLocal(), esta función:
+ *   - NO verifica duplicados de caravana (el animal ya existe).
+ *   - Usa db.collection().doc().update() en lugar de .add().
+ *   - Preserva los campos que NO están en el formulario (historial_sanitario, etc.).
+ *
+ * @param {string} docId        - ID del documento Firestore a actualizar.
+ * @param {Object} datosForm    - Datos recogidos del formulario de Alta.
+ * @returns {Promise<boolean>}  - true si se actualizó correctamente.
+ */
+async function actualizarAnimalDesdeFormulario(docId, datosForm) {
+  if (!docId || !usuarioActual) {
+    mostrarToast('No se puede guardar: sesión no iniciada.', 'error');
+    return false;
+  }
+
+  let { caravana, nombre, sexo, raza, categoria, fecha_nac, peso_nac, peso_destete, madre, padre, castrado, foto } = datosForm;
+
+  // Validaciones obligatorias (mismas que en el alta)
+  if (!caravana || caravana.trim() === '') {
+    mostrarToast('⚠️ El número de caravana es obligatorio.', 'error');
+    document.getElementById('input-caravana')?.focus();
+    return false;
+  }
+  if (!sexo) {
+    mostrarToast('⚠️ Seleccioná el sexo del animal.', 'error');
+    return false;
+  }
+  if (!raza) {
+    mostrarToast('⚠️ Seleccioná o escribí una raza.', 'error');
+    document.getElementById('input-raza')?.focus();
+    return false;
+  }
+  if (!categoria) {
+    mostrarToast('⚠️ Seleccioná la categoría por dentición.', 'error');
+    document.getElementById('sel-categoria')?.focus();
+    return false;
+  }
+
+  // Normalizar campos opcionales
+  const caravanaLimpia = caravana.trim().toUpperCase();
+  nombre       = nombre?.trim()  ? sanitizarTexto(nombre)              : null;
+  fecha_nac    = fecha_nac       ? fecha_nac                           : null;
+  peso_nac     = peso_nac        ? parseFloat(peso_nac)                : null;
+  peso_destete = peso_destete    ? parseFloat(peso_destete)            : null;
+  madre        = madre?.trim()   ? sanitizarTexto(madre.toUpperCase()) : null;
+  padre        = padre?.trim()   ? sanitizarTexto(padre.toUpperCase()) : null;
+  foto         = foto            ? foto                                : null;
+
+  const datosActualizados = {
+    caravana_id:       sanitizarTexto(caravanaLimpia),
+    nombre:            nombre,
+    sexo:              sanitizarTexto(sexo),
+    raza:              sanitizarTexto(raza),
+    categoria:         sanitizarTexto(categoria),
+    fecha_nacimiento:  fecha_nac,
+    peso_nacimiento:   peso_nac,
+    peso_destete:      peso_destete,
+    caravana_madre:    madre,
+    caravana_padre:    padre,
+    castrado:          Boolean(castrado),
+    foto:              foto,
+    fechaModificacion: new Date().toISOString(),
+  };
+
+  try {
+    await db.collection('animales').doc(docId).update(datosActualizados);
+    console.log(`[Inventario] ✅ Animal actualizado desde formulario de Alta: ${caravanaLimpia}`);
+    mostrarToast(`✅ Animal ${caravanaLimpia} actualizado correctamente.`, 'exito', 4000);
+    return true;
+  } catch (error) {
+    console.error('[Inventario] ❌ Error al actualizar animal en Firestore:', error);
+    mostrarToast('Error al guardar los cambios. Verificá tu conexión.', 'error', 5000);
     return false;
   }
 }
@@ -1647,43 +1744,50 @@ function inicializarFormularioAlta() {
   if (!btn) return;
 
   btn.addEventListener('click', async () => {
+    // ── Recopilar datos del formulario ──
     let sexoSeleccionado = '';
     const radiosSexo = document.getElementsByName('sexo');
     for (const r of radiosSexo) {
-      if (r.checked) {
-        sexoSeleccionado = r.value;
-        break;
-      }
+      if (r.checked) { sexoSeleccionado = r.value; break; }
     }
 
     let castradoSeleccionado = false;
     const radiosCastrado = document.getElementsByName('castrado');
     for (const r of radiosCastrado) {
-      if (r.checked) {
-        castradoSeleccionado = (r.value === 'si');
-        break;
-      }
+      if (r.checked) { castradoSeleccionado = (r.value === 'si'); break; }
     }
 
     const datosFormulario = {
-      caravana:      document.getElementById('input-caravana')?.value   || '',
-      nombre:        document.getElementById('input-nombre')?.value     || '',
-      sexo:          sexoSeleccionado,
-      raza:          document.getElementById('input-raza')?.value       || '',
-      categoria:     document.getElementById('sel-categoria')?.value    || '',
-      fecha_nac:     document.getElementById('input-fecha-nac')?.value  || '',
-      peso_nac:      document.getElementById('input-peso-nac')?.value   || '',
-      peso_destete:  document.getElementById('input-peso-destete')?.value || '',
-      madre:         document.getElementById('input-madre')?.value      || '',
-      padre:         document.getElementById('input-padre')?.value      || '',
-      castrado:      castradoSeleccionado,
-      foto:          fotoBase64Temporal
+      caravana:     document.getElementById('input-caravana')?.value      || '',
+      nombre:       document.getElementById('input-nombre')?.value        || '',
+      sexo:         sexoSeleccionado,
+      raza:         document.getElementById('input-raza')?.value          || '',
+      categoria:    document.getElementById('sel-categoria')?.value       || '',
+      fecha_nac:    document.getElementById('input-fecha-nac')?.value     || '',
+      peso_nac:     document.getElementById('input-peso-nac')?.value      || '',
+      peso_destete: document.getElementById('input-peso-destete')?.value  || '',
+      madre:        document.getElementById('input-madre')?.value         || '',
+      padre:        document.getElementById('input-padre')?.value         || '',
+      castrado:     castradoSeleccionado,
+      foto:         fotoBase64Temporal,
     };
 
-    // Llamada asíncrona: guardarAnimalLocal ahora guarda en Firestore (await)
-    const guardadoOk = await guardarAnimalLocal(datosFormulario);
+    // ── Bifurcación: CREAR vs EDITAR según idAnimalEnEdicion ──
+    // NULL  → el formulario está en modo CREAR → usa addDoc
+    // string → el formulario está en modo EDITAR → usa updateDoc
+    let guardadoOk = false;
+    if (idAnimalEnEdicion === null) {
+      // MODO CREAR — no hay ID activo → addDoc en Firestore
+      guardadoOk = await guardarAnimalLocal(datosFormulario);
+    } else {
+      // MODO EDITAR — hay ID activo → updateDoc en Firestore
+      guardadoOk = await actualizarAnimalDesdeFormulario(idAnimalEnEdicion, datosFormulario);
+    }
 
     if (guardadoOk) {
+      // Limpiar siempre el estado de edición tras guardar con éxito
+      // (sea CREAR o EDITAR) para devolver el formulario a modo CREAR
+      idAnimalEnEdicion = null;
       limpiarFormularioAlta();
     }
   });
@@ -1694,6 +1798,9 @@ function inicializarFormularioAlta() {
  * después de un guardado exitoso.
  */
 function limpiarFormularioAlta() {
+  // Resetear el estado de edición para garantizar que el form quede en modo CREAR
+  idAnimalEnEdicion = null;
+
   const camposInput = ['input-caravana', 'input-nombre', 'input-fecha-nac', 'input-peso-nac', 'input-peso-destete', 'input-madre', 'input-padre', 'input-raza'];
   camposInput.forEach((id) => {
     const el = document.getElementById(id);
@@ -1716,13 +1823,17 @@ function limpiarFormularioAlta() {
 
   const inputFoto = document.getElementById('foto-animal');
   if (inputFoto) inputFoto.value = '';
-  
+
   fotoBase64Temporal = null;
   const contenedorPrevia = document.getElementById('previsualizacion-foto');
   if (contenedorPrevia) {
     contenedorPrevia.innerHTML = '';
     contenedorPrevia.classList.remove('activo');
   }
+
+  // Restaurar título del botón por si estaba en modo edición
+  const btnGuardar = document.getElementById('btn-guardar-animal');
+  if (btnGuardar) btnGuardar.textContent = 'Guardar Animal';
 
   document.getElementById('input-caravana')?.focus();
 }
