@@ -1863,6 +1863,103 @@
       border-color: var(--color-primario);
       box-shadow: 0 0 0 3px rgba(46,204,113,0.25);
     }
+
+    /* ============================================================
+       MODAL DE EDICIÓN DE ANIMAL
+       Reutiliza el sistema visual del modal de detalle.
+    ============================================================ */
+    #modal-editar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.60);
+      z-index: 6000;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 16px 12px;
+      overflow-y: auto;
+    }
+    #modal-editar-overlay.abierto {
+      display: flex;
+    }
+    #modal-editar-panel {
+      background-color: #ffffff;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 460px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.30);
+      overflow: hidden;
+      animation: modalEntrada 0.25s ease;
+    }
+    .modal-editar-cabecera {
+      background: linear-gradient(135deg, #d35400, #f39c12);
+      padding: 20px 20px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .modal-editar-titulo {
+      font-size: 1.2rem;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: -0.3px;
+    }
+    .modal-editar-subtitulo {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.85);
+      margin-top: 2px;
+    }
+    .modal-editar-cuerpo {
+      padding: 20px;
+      max-height: calc(100dvh - 130px);
+      overflow-y: auto;
+    }
+    #previsualizacion-foto-editar {
+      width: 100%;
+      min-height: 120px;
+      border: 2px dashed var(--color-borde);
+      border-radius: var(--radio-borde);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      margin-top: 10px;
+      background-color: var(--color-superficie);
+      overflow: hidden;
+    }
+    #previsualizacion-foto-editar.activo {
+      display: flex;
+      border-style: solid;
+      border-color: var(--color-primario);
+    }
+    #previsualizacion-foto-editar img {
+      max-width: 100%;
+      max-height: 200px;
+      object-fit: contain;
+    }
+    #btn-guardar-edicion {
+      background: linear-gradient(135deg, #d35400, #f39c12);
+      color: #ffffff;
+      box-shadow: 0 6px 20px rgba(211,84,0,0.45);
+      font-size: 1.05rem;
+    }
+    #btn-guardar-edicion:hover {
+      filter: brightness(1.1);
+    }
+    #btn-guardar-edicion:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .editar-seccion-titulo {
+      font-size: 0.75rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #d35400;
+      margin: 18px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #fdebd0;
+    }
   </style>
 </head>
 
@@ -2905,6 +3002,217 @@
       </div><!-- /modal-cuerpo -->
     </div><!-- /modal-animal-panel -->
   </div><!-- /modal-animal-overlay -->
+
+
+  <!-- ============================================================
+       MODAL DE EDICIÓN DE ANIMAL
+       Se abre al presionar el botón "Editar" (lápiz) en cada tarjeta.
+       z-index: 6000 — por encima del modal de detalle (5000).
+  ============================================================ -->
+  <div
+    id="modal-editar-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modal-editar-titulo-h2"
+  >
+    <div id="modal-editar-panel">
+
+      <!-- ── Cabecera naranja del modal ── -->
+      <div class="modal-editar-cabecera">
+        <div>
+          <p class="modal-editar-titulo" id="modal-editar-titulo-h2">✏️ Editar Animal</p>
+          <p class="modal-editar-subtitulo" id="modal-editar-caravana-sub">Caravana: —</p>
+        </div>
+        <button
+          id="modal-editar-btn-cerrar"
+          class="modal-btn-cerrar"
+          type="button"
+          aria-label="Cerrar editor"
+        >✕</button>
+      </div>
+
+      <!-- ── Cuerpo scrolleable del modal ── -->
+      <div class="modal-editar-cuerpo">
+
+        <!-- SECCIÓN: Identificación -->
+        <p class="editar-seccion-titulo">Identificación</p>
+
+        <div class="campo-grupo">
+          <label for="editar-caravana" class="campo-etiqueta requerido">Nº de Caravana ID</label>
+          <input
+            id="editar-caravana"
+            type="text"
+            class="campo-input"
+            maxlength="20"
+            autocapitalize="characters"
+            spellcheck="false"
+            required
+            aria-required="true"
+            placeholder="Ej: AR-00123"
+          />
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-nombre" class="campo-etiqueta">Nombre del Animal</label>
+          <input
+            id="editar-nombre"
+            type="text"
+            class="campo-input"
+            maxlength="50"
+            autocomplete="off"
+            placeholder="Opcional. Ej: Copo de Nieve"
+          />
+        </div>
+
+        <!-- SECCIÓN: Características -->
+        <p class="editar-seccion-titulo">Características</p>
+
+        <div class="campo-grupo">
+          <label class="campo-etiqueta requerido">Sexo</label>
+          <div class="radio-gigante-grupo">
+            <input type="radio" id="editar-radio-macho" name="editar-sexo" value="Macho" class="radio-gigante-input" required>
+            <label for="editar-radio-macho" class="radio-gigante-label opcion-tactil">Macho</label>
+            <input type="radio" id="editar-radio-hembra" name="editar-sexo" value="Hembra" class="radio-gigante-input" required>
+            <label for="editar-radio-hembra" class="radio-gigante-label opcion-tactil">Hembra</label>
+          </div>
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-raza" class="campo-etiqueta requerido">Raza</label>
+          <input
+            id="editar-raza"
+            list="raza-list"
+            class="campo-input"
+            placeholder="Escribí o seleccioná la raza"
+            required
+            aria-required="true"
+          />
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-categoria" class="campo-etiqueta requerido">Categoría por Dentición</label>
+          <select id="editar-categoria" class="campo-select" required aria-required="true">
+            <option value="">— Seleccioná la categoría —</option>
+            <option value="Cordero / Cordera (0 a 6 meses)">Cordero / Cordera (Dientes de leche - 0 a 6 meses)</option>
+            <option value="Borrego / Borrega (6 a 18 meses)">Borrego / Borrega (2 dientes permanentes - 6 a 18 meses)</option>
+            <option value="Oveja Adulta / Carnero (2 años)">Oveja Adulta / Carnero (4 dientes permanentes - 2 años)</option>
+            <option value="Oveja Adulta / Carnero (3 años)">Oveja Adulta / Carnero (6 dientes permanentes - 3 años)</option>
+            <option value="Oveja Adulta / Carnero (4 años o más)">Oveja Adulta / Carnero (8 dientes permanentes - 4 años o más)</option>
+          </select>
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-fecha-nac" class="campo-etiqueta">Fecha de Nacimiento</label>
+          <input
+            id="editar-fecha-nac"
+            type="date"
+            class="campo-input"
+          />
+        </div>
+
+        <!-- SECCIÓN: Pesos -->
+        <p class="editar-seccion-titulo">Pesos</p>
+
+        <div class="campo-grupo">
+          <label for="editar-peso-nac" class="campo-etiqueta">Peso al Nacimiento (Kg)</label>
+          <input
+            id="editar-peso-nac"
+            type="number"
+            step="0.1"
+            min="0"
+            class="campo-input"
+            placeholder="Ej: 4.5"
+          />
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-peso-destete" class="campo-etiqueta">Peso al Destete (Kg)</label>
+          <input
+            id="editar-peso-destete"
+            type="number"
+            step="0.1"
+            min="0"
+            class="campo-input"
+            placeholder="Ej: 25.0"
+          />
+        </div>
+
+        <!-- SECCIÓN: Castrado -->
+        <p class="editar-seccion-titulo">Condición</p>
+
+        <div class="campo-grupo">
+          <label class="campo-etiqueta">¿Está Castrado?</label>
+          <div class="radio-gigante-grupo">
+            <input type="radio" id="editar-castrado-si" name="editar-castrado" value="si" class="radio-gigante-input">
+            <label for="editar-castrado-si" class="radio-gigante-label opcion-tactil">SÍ</label>
+            <input type="radio" id="editar-castrado-no" name="editar-castrado" value="no" class="radio-gigante-input" checked>
+            <label for="editar-castrado-no" class="radio-gigante-label opcion-tactil">NO</label>
+          </div>
+        </div>
+
+        <!-- SECCIÓN: Filiación -->
+        <p class="editar-seccion-titulo">Filiación (Genealogía)</p>
+
+        <div class="campo-grupo">
+          <label for="editar-madre" class="campo-etiqueta">Caravana de la Madre</label>
+          <input
+            id="editar-madre"
+            type="text"
+            class="campo-input"
+            maxlength="20"
+            autocapitalize="characters"
+            placeholder="Opcional. Ej: AR-00100"
+          />
+        </div>
+
+        <div class="campo-grupo">
+          <label for="editar-padre" class="campo-etiqueta">Caravana del Padre</label>
+          <input
+            id="editar-padre"
+            type="text"
+            class="campo-input"
+            maxlength="20"
+            autocapitalize="characters"
+            placeholder="Opcional. Ej: AR-00050"
+          />
+        </div>
+
+        <!-- SECCIÓN: Foto -->
+        <p class="editar-seccion-titulo">Fotografía</p>
+
+        <div class="campo-grupo">
+          <input
+            type="file"
+            id="editar-foto-input"
+            accept="image/jpeg, image/png, image/webp"
+            style="display:none;"
+          />
+          <label for="editar-foto-input" class="btn-file-label">
+            📷 Cambiar Foto del Animal
+          </label>
+          <!-- Previsualización: muestra la foto actual o la nueva -->
+          <div id="previsualizacion-foto-editar">
+            <img id="editar-foto-preview-img" src="" alt="Previsualización de la foto" />
+          </div>
+        </div>
+
+        <!-- ── Botón principal de acción ── -->
+        <button
+          id="btn-guardar-edicion"
+          type="button"
+          class="btn-grande btn-primario mt-16"
+          aria-label="Guardar cambios del animal"
+        >
+          💾 Guardar Cambios
+        </button>
+
+        <!-- Espacio inferior para no cortar el botón en móvil -->
+        <div style="height: 12px;"></div>
+
+      </div><!-- /modal-editar-cuerpo -->
+    </div><!-- /modal-editar-panel -->
+  </div><!-- /modal-editar-overlay -->
+
 
   <!-- Carga el cerebro de la aplicación (después de los SDKs de Firebase) -->
   <script src="app.js" defer></script>

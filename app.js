@@ -3151,13 +3151,317 @@ window.exportarInventarioGeneral = async function() {
   }
 };
 
+/* ============================================================
+   MÓDULO: EDICIÓN DE ANIMAL (Modal de Edición)
+   Implementa apertura, carga de datos y guardado en Firestore.
+============================================================ */
+
+/** @type {string|null} ID del documento actualmente en edición */
+let animalEnEdicionId = null;
+
+/** @type {string|null} Foto en Base64 del animal en edición (existente o nueva) */
+let fotoEditarBase64 = null;
+
 /**
- * Función provisional para la edición de animales en el inventario.
- * @param {string} docId - ID del documento del animal.
+ * Abre el modal de edición y rellena todos sus campos con los datos actuales
+ * del animal. Primero busca en animalesCache para respuesta instantánea;
+ * si no está en caché, realiza un getDoc a Firestore como fallback.
+ *
+ * @global — accesible desde el HTML mediante onclick="abrirModalEditar(id)"
+ * @param {string} animalId - ID del documento Firestore del animal a editar.
  */
-window.editarAnimal = function(docId) {
-  mostrarToast('ℹ️ Función de edición en desarrollo.', 'info');
+window.abrirModalEditar = async function(animalId) {
+  if (!animalId || !usuarioActual) {
+    mostrarToast('No se puede editar: sesión no iniciada.', 'error');
+    return;
+  }
+
+  animalEnEdicionId = animalId;
+
+  // ── Buscar en caché local primero (respuesta instantánea offline) ──
+  let animal = animalesCache.find(a => a.id === animalId);
+
+  // ── Fallback: consultar Firestore si no está en caché ──
+  if (!animal) {
+    try {
+      mostrarToast('Cargando datos del animal...', 'info', 2000);
+      const snap = await db.collection('animales').doc(animalId).get();
+      if (!snap.exists) {
+        mostrarToast('Animal no encontrado en la base de datos.', 'error');
+        animalEnEdicionId = null;
+        return;
+      }
+      animal = { id: snap.id, ...snap.data() };
+    } catch (err) {
+      console.error('[Editar] ❌ Error al obtener animal de Firestore:', err);
+      mostrarToast('Error al cargar los datos del animal.', 'error');
+      animalEnEdicionId = null;
+      return;
+    }
+  }
+
+  // ── Rellenar campos de identificación ──
+  const subtituloEl = document.getElementById('modal-editar-caravana-sub');
+  if (subtituloEl) subtituloEl.textContent = `Caravana: ${animal.caravana_id || '—'}`;
+
+  const elCaravana = document.getElementById('editar-caravana');
+  if (elCaravana) elCaravana.value = animal.caravana_id || '';
+
+  const elNombre = document.getElementById('editar-nombre');
+  if (elNombre) elNombre.value = animal.nombre || '';
+
+  // Sexo (radio buttons)
+  const radioMacho  = document.getElementById('editar-radio-macho');
+  const radioHembra = document.getElementById('editar-radio-hembra');
+  if (radioMacho && radioHembra) {
+    radioMacho.checked  = animal.sexo === 'Macho';
+    radioHembra.checked = animal.sexo === 'Hembra';
+  }
+
+  // Raza
+  const elRaza = document.getElementById('editar-raza');
+  if (elRaza) elRaza.value = animal.raza || '';
+
+  // Categoría
+  const elCategoria = document.getElementById('editar-categoria');
+  if (elCategoria) elCategoria.value = animal.categoria || '';
+
+  // Fecha de nacimiento (formato YYYY-MM-DD para input[type=date])
+  const elFechaNac = document.getElementById('editar-fecha-nac');
+  if (elFechaNac) {
+    elFechaNac.value = animal.fecha_nacimiento
+      ? animal.fecha_nacimiento.substring(0, 10)
+      : '';
+  }
+
+  // Pesos
+  const elPesoNac = document.getElementById('editar-peso-nac');
+  if (elPesoNac) elPesoNac.value = animal.peso_nacimiento != null ? animal.peso_nacimiento : '';
+
+  const elPesoDestete = document.getElementById('editar-peso-destete');
+  if (elPesoDestete) elPesoDestete.value = animal.peso_destete != null ? animal.peso_destete : '';
+
+  // Castrado (radio buttons)
+  const radioCastSi = document.getElementById('editar-castrado-si');
+  const radioCastNo = document.getElementById('editar-castrado-no');
+  if (radioCastSi && radioCastNo) {
+    radioCastSi.checked = Boolean(animal.castrado);
+    radioCastNo.checked = !Boolean(animal.castrado);
+  }
+
+  // Filiación
+  const elMadre = document.getElementById('editar-madre');
+  if (elMadre) elMadre.value = animal.caravana_madre || '';
+
+  const elPadre = document.getElementById('editar-padre');
+  if (elPadre) elPadre.value = animal.caravana_padre || '';
+
+  // ── Foto: mostrar la existente en la previsualización ──
+  fotoEditarBase64  = animal.foto || null;
+  const prevFotoEl  = document.getElementById('previsualizacion-foto-editar');
+  const prevFotoImg = document.getElementById('editar-foto-preview-img');
+  if (prevFotoEl && prevFotoImg) {
+    if (animal.foto) {
+      prevFotoImg.src = animal.foto;
+      prevFotoEl.classList.add('activo');
+    } else {
+      prevFotoImg.src = '';
+      prevFotoEl.classList.remove('activo');
+    }
+  }
+
+  // Limpiar input de archivo para permitir re-subir
+  const inputFotoEditar = document.getElementById('editar-foto-input');
+  if (inputFotoEditar) inputFotoEditar.value = '';
+
+  // ── Abrir el overlay con animación ──
+  const overlay = document.getElementById('modal-editar-overlay');
+  if (overlay) {
+    overlay.classList.add('abierto');
+    document.body.style.overflow = 'hidden';
+  }
+
+  console.log(`[Editar] ✅ Modal abierto para: ${animal.caravana_id} (ID: ${animalId})`);
 };
+
+// El botón de tarjetas llama "editarAnimal" — mapear al nuevo handler
+window.editarAnimal = window.abrirModalEditar;
+
+/**
+ * Cierra el modal de edición y restaura el scroll.
+ */
+function cerrarModalEditar() {
+  const overlay = document.getElementById('modal-editar-overlay');
+  if (overlay) overlay.classList.remove('abierto');
+  document.body.style.overflow = '';
+  animalEnEdicionId = null;
+  fotoEditarBase64  = null;
+}
+
+/**
+ * Recopila los datos del formulario de edición, valida los campos obligatorios
+ * y ejecuta un updateDoc en Firestore con la información actualizada.
+ *
+ * @param {string} animalId - ID del documento Firestore a actualizar.
+ */
+async function guardarCambiosAnimal(animalId) {
+  if (!animalId || !usuarioActual) {
+    mostrarToast('No se puede guardar: sesión no iniciada.', 'error');
+    return;
+  }
+
+  // ── Recopilar valores ──
+  const caravanaRaw = document.getElementById('editar-caravana')?.value?.trim()  || '';
+  const nombre      = document.getElementById('editar-nombre')?.value?.trim()    || '';
+  const sexoEl      = document.querySelector('input[name="editar-sexo"]:checked');
+  const raza        = document.getElementById('editar-raza')?.value?.trim()       || '';
+  const categoria   = document.getElementById('editar-categoria')?.value          || '';
+  const fechaNac    = document.getElementById('editar-fecha-nac')?.value          || '';
+  const pesoNacRaw  = document.getElementById('editar-peso-nac')?.value           || '';
+  const pesoDsRaw   = document.getElementById('editar-peso-destete')?.value       || '';
+  const castradoEl  = document.querySelector('input[name="editar-castrado"]:checked');
+  const madre       = document.getElementById('editar-madre')?.value?.trim()      || '';
+  const padre       = document.getElementById('editar-padre')?.value?.trim()      || '';
+
+  // ── Validaciones básicas ──
+  if (!caravanaRaw) {
+    mostrarToast('⚠️ El número de caravana es obligatorio.', 'error');
+    document.getElementById('editar-caravana')?.focus();
+    return;
+  }
+  if (!sexoEl) {
+    mostrarToast('⚠️ Seleccioná el sexo del animal.', 'error');
+    return;
+  }
+  if (!raza) {
+    mostrarToast('⚠️ Ingresá la raza del animal.', 'error');
+    document.getElementById('editar-raza')?.focus();
+    return;
+  }
+  if (!categoria) {
+    mostrarToast('⚠️ Seleccioná la categoría por dentición.', 'error');
+    document.getElementById('editar-categoria')?.focus();
+    return;
+  }
+
+  const caravanaLimpia = caravanaRaw.toUpperCase();
+
+  // ── Construir objeto de datos actualizados ──
+  const datosActualizados = {
+    caravana_id:       sanitizarTexto(caravanaLimpia),
+    nombre:            nombre       ? sanitizarTexto(nombre)              : null,
+    sexo:              sanitizarTexto(sexoEl.value),
+    raza:              sanitizarTexto(raza),
+    categoria:         sanitizarTexto(categoria),
+    fecha_nacimiento:  fechaNac     ? fechaNac                            : null,
+    peso_nacimiento:   pesoNacRaw   ? parseFloat(pesoNacRaw)              : null,
+    peso_destete:      pesoDsRaw    ? parseFloat(pesoDsRaw)               : null,
+    castrado:          castradoEl?.value === 'si',
+    caravana_madre:    madre        ? sanitizarTexto(madre.toUpperCase()) : null,
+    caravana_padre:    padre        ? sanitizarTexto(padre.toUpperCase()) : null,
+    foto:              fotoEditarBase64,
+    fechaModificacion: new Date().toISOString(),
+  };
+
+  // ── Deshabilitar botón durante el guardado ──
+  const btnGuardar = document.getElementById('btn-guardar-edicion');
+  if (btnGuardar) {
+    btnGuardar.disabled = true;
+    btnGuardar.textContent = 'Guardando...';
+  }
+
+  try {
+    // Actualizar el documento en Firestore
+    await db.collection('animales').doc(animalId).update(datosActualizados);
+
+    console.log(`[Editar] ✅ Animal actualizado en Firestore: ${caravanaLimpia}`);
+    mostrarToast(`✅ Animal ${caravanaLimpia} actualizado correctamente.`, 'exito', 4000);
+
+    cerrarModalEditar();
+    // onSnapshot actualizará la lista automáticamente
+
+  } catch (error) {
+    console.error('[Editar] ❌ Error al actualizar animal en Firestore:', error);
+    mostrarToast('Error al guardar los cambios. Verificá tu conexión.', 'error', 5000);
+  } finally {
+    if (btnGuardar) {
+      btnGuardar.disabled = false;
+      btnGuardar.textContent = '💾 Guardar Cambios';
+    }
+  }
+}
+
+/**
+ * Conecta todos los eventos del modal de edición:
+ *   - Botón X de cierre
+ *   - Clic en el overlay para cerrar
+ *   - Botón "Guardar Cambios"
+ *   - Input de foto con compresión Canvas
+ */
+function inicializarModalEditar() {
+  // Botón cerrar (X)
+  document.getElementById('modal-editar-btn-cerrar')
+    ?.addEventListener('click', cerrarModalEditar);
+
+  // Clic en el fondo oscuro (overlay)
+  const overlay = document.getElementById('modal-editar-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cerrarModalEditar();
+    });
+  }
+
+  // Botón "Guardar Cambios"
+  document.getElementById('btn-guardar-edicion')
+    ?.addEventListener('click', () => {
+      if (animalEnEdicionId) {
+        guardarCambiosAnimal(animalEnEdicionId);
+      } else {
+        mostrarToast('Error: no hay animal seleccionado.', 'error');
+      }
+    });
+
+  // Input de foto con compresión mediante Canvas
+  const inputFotoEditar = document.getElementById('editar-foto-input');
+  const prevFotoEl      = document.getElementById('previsualizacion-foto-editar');
+  const prevFotoImg     = document.getElementById('editar-foto-preview-img');
+
+  if (inputFotoEditar) {
+    inputFotoEditar.addEventListener('change', (evento) => {
+      const archivo = evento.target.files[0];
+      if (!archivo || !archivo.type.startsWith('image/')) {
+        if (archivo) mostrarToast('Solo se permiten imágenes (JPG, PNG, WEBP).', 'error');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX = 800;
+          let w = img.width;
+          let h = img.height;
+          if (w > MAX || h > MAX) {
+            const ratio = Math.min(MAX / w, MAX / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width  = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          fotoEditarBase64 = canvas.toDataURL('image/jpeg', 0.75);
+          if (prevFotoImg) prevFotoImg.src = fotoEditarBase64;
+          if (prevFotoEl)  prevFotoEl.classList.add('activo');
+          mostrarToast('📷 Foto nueva cargada. Guardá los cambios para confirmar.', 'info', 3000);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(archivo);
+    });
+  }
+
+  console.log('[ModalEditar] ✅ Modal de edición inicializado.');
+}
 
 
 
@@ -3195,6 +3499,9 @@ function inicializarAppUnaVez() {
   // 6. Inicializar el modal de detalle completo del animal (Ojo)
   // Conecta el botón X, el overlay de cierre y las pestañas de historiales.
   inicializarModal();
+
+  // 6b. Inicializar el modal de edición de animal (Lápiz)
+  inicializarModalEditar();
 
   // 7. Conectar botones de exportación PDF
   document.getElementById('btn-exportar-inventario-pdf')?.addEventListener('click', () => {
